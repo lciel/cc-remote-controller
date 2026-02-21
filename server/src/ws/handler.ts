@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 import { config } from '../config.js';
+import { safeCompare } from '../utils/crypto.js';
 import { WsClientMessage, WsServerMessage } from '../types.js';
 
 // projectId → Set of subscribed WebSocket clients
@@ -12,7 +13,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
     const url = new URL(req.url || '', `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
 
-    if (token !== config.authToken) {
+    if (!token || !safeCompare(token, config.authToken)) {
       ws.close(4001, 'Unauthorized');
       return;
     }
