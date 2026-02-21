@@ -12,11 +12,11 @@ export interface ClaudeConversation {
 
 /**
  * Convert a repo path to Claude's project directory name.
- * Claude Code uses the absolute path with '/' replaced by '-' and leading '-'.
- * e.g. /home/lciel/works/git/project → -home-lciel-works-git-project
+ * Claude Code replaces all non-alphanumeric characters with '-'.
+ * e.g. /home/lciel/works/git/project_haze → -home-lciel-works-git-project-haze
  */
 function repoPathToProjectDir(repoPath: string): string {
-  return repoPath.replace(/\//g, '-');
+  return repoPath.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 /**
