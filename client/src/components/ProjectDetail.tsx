@@ -151,6 +151,10 @@ function buildHistoryMessages(history: ClaudeHistoryMessage[], promptImages?: Ma
       const rawText = typeof msg.content === 'string'
         ? msg.content
         : JSON.stringify(msg.content);
+      // Skip system/notification messages injected into conversation
+      if (rawText.includes('<task-notification>') || rawText.includes('<system-reminder>')) {
+        continue;
+      }
       const { text, hadImages } = stripImagePaths(rawText);
       const imgs = promptImages?.get(text);
       messages.push({
