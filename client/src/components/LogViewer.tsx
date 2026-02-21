@@ -93,6 +93,8 @@ function countBlocks(messages: ChatMessage[]): number {
 export function LogViewer({ messages, loading, loadingLabel }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
+  const userInteracting = useRef(false);
+  const scrollTimer = useRef<number>(0);
   const prevBlockCount = useRef(0);
   const [hasNewMessages, setHasNewMessages] = useState(false);
 
@@ -104,18 +106,47 @@ export function LogViewer({ messages, loading, loadingLabel }: Props) {
 
     if (el && shouldAutoScroll.current) {
       el.scrollTop = el.scrollHeight;
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     } else if (el && !shouldAutoScroll.current && isNew) {
       setHasNewMessages(true);
     }
   }, [messages]);
 
+  // Track user touch/mouse to detect intentional scroll-away
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onStart = () => { userInteracting.current = true; };
+    const onEnd = () => { userInteracting.current = false; };
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchend', onEnd, { passive: true });
+    el.addEventListener('mousedown', onStart);
+    el.addEventListener('mouseup', onEnd);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('mousedown', onStart);
+      el.removeEventListener('mouseup', onEnd);
+    };
+  }, []);
+
   const handleScroll = () => {
     const el = containerRef.current;
-    if (el) {
+    if (!el) return;
+
+    // Immediately detect user scrolling away from bottom
+    if (userInteracting.current) {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+      if (!atBottom) shouldAutoScroll.current = false;
+    }
+
+    // Debounced: re-check after scrolling fully stops (handles momentum)
+    clearTimeout(scrollTimer.current);
+    scrollTimer.current = window.setTimeout(() => {
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
       shouldAutoScroll.current = atBottom;
       if (atBottom) setHasNewMessages(false);
-    }
+    }, 150);
   };
 
   const scrollToBottom = () => {
