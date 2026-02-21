@@ -1,0 +1,12 @@
+node_modules/
+data/
+dist/
+.env
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.claude/
+CLAUDE.md
+CURRENT_WORK.md
+docs/
