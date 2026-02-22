@@ -130,6 +130,66 @@ export async function getContextUsage(repoPath: string, sessionId: string): Prom
   return null;
 }
 
+export interface DiscoveredProject {
+  path: string;
+  name: string;
+}
+
+/**
+ * Extract the cwd field from a JSONL file (typically in the first few lines).
+ */
+async function extractCwdFromJsonl(filePath: string): Promise<string | null> {
+  const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.cwd) return parsed.cwd;
+      } catch { continue; }
+    }
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return null;
+}
+
+/**
+ * Discover Claude Code projects by scanning ~/.claude/projects/.
+ * Reads cwd from JSONL files to recover the real absolute path.
+ */
+export async function discoverClaudeProjects(): Promise<DiscoveredProject[]> {
+  const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+  if (!fs.existsSync(claudeDir)) return [];
+
+  const entries = fs.readdirSync(claudeDir, { withFileTypes: true })
+    .filter(d => d.isDirectory());
+
+  const results: DiscoveredProject[] = [];
+
+  for (const entry of entries) {
+    const projectDir = path.join(claudeDir, entry.name);
+    const jsonlFiles = fs.readdirSync(projectDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => ({
+        fullPath: path.join(projectDir, f),
+        stat: fs.statSync(path.join(projectDir, f)),
+      }))
+      .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+
+    if (jsonlFiles.length === 0) continue;
+
+    const cwd = await extractCwdFromJsonl(jsonlFiles[0].fullPath);
+    if (!cwd || !fs.existsSync(cwd)) continue;
+
+    results.push({ path: cwd, name: path.basename(cwd) });
+  }
+
+  return results;
+}
+
 export interface ClaudeMessage {
   role: 'user' | 'assistant';
   content: unknown;

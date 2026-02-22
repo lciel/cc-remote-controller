@@ -433,6 +433,58 @@ a {
   word-break: break-word;
 }
 
+.discover-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.discover-tabs .btn {
+  flex: 1;
+}
+
+.btn-tab-active {
+  background: var(--color-accent) !important;
+  color: #fff !important;
+}
+
+.discover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.discover-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.discover-item:active {
+  border-color: var(--color-accent);
+}
+
+.discover-item-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.discover-item-path {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .new-messages-btn {
   position: sticky;
   bottom: 8px;

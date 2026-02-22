@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import * as projectService from '../services/projectService.js';
 import * as jobService from '../services/jobService.js';
-import { listConversations, readConversation, getContextUsage } from '../services/claudeConversations.js';
+import { listConversations, readConversation, getContextUsage, discoverClaudeProjects } from '../services/claudeConversations.js';
 
 const router = Router();
 
@@ -30,6 +30,14 @@ router.post('/', (req: Request, res: Response) => {
 router.get('/', (_req: Request, res: Response) => {
   const projects = projectService.listProjects();
   res.json(projects);
+});
+
+// GET /api/projects/discover - Discover Claude Code projects from ~/.claude/projects/
+router.get('/discover', async (_req: Request, res: Response) => {
+  const discovered = await discoverClaudeProjects();
+  const existing = projectService.listProjects();
+  const existingPaths = new Set(existing.map(p => p.repo_path));
+  res.json(discovered.filter(d => !existingPaths.has(d.path)));
 });
 
 // DELETE /api/projects/:id - Delete project

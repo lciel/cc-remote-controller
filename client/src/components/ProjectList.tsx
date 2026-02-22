@@ -1,7 +1,7 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { useProjects } from '../hooks/useProjects';
 import { ProjectCard } from './ProjectCard';
-import { api, setToken } from '../api/rest';
+import { api, setToken, DiscoveredProject } from '../api/rest';
 import { reconnectWs } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 
@@ -21,6 +21,28 @@ export function ProjectList(_props: Props) {
     localStorage.getItem('cc-auth-token') || ''
   );
 
+  // Discovery state
+  const [discovered, setDiscovered] = useState<DiscoveredProject[]>([]);
+  const [loadingDiscover, setLoadingDiscover] = useState(false);
+  const [inputMode, setInputMode] = useState<'select' | 'manual'>('select');
+
+  useEffect(() => {
+    if (showCreate) {
+      setLoadingDiscover(true);
+      api.discoverProjects().then((projects) => {
+        setDiscovered(projects);
+        if (projects.length === 0) setInputMode('manual');
+      }).catch(() => {
+        setInputMode('manual');
+      }).finally(() => {
+        setLoadingDiscover(false);
+      });
+    } else {
+      setDiscovered([]);
+      setInputMode('select');
+    }
+  }, [showCreate]);
+
   const handleCreate = async () => {
     if (!name || !repoPath) return;
     setCreating(true);
@@ -37,6 +59,12 @@ export function ProjectList(_props: Props) {
     }
   };
 
+  const handleSelectProject = (dp: DiscoveredProject) => {
+    setName(dp.name);
+    setRepoPath(dp.path);
+    setInputMode('manual');
+  };
+
   const handleDelete = async (id: string) => {
     try {
       await api.deleteProject(id);
@@ -51,6 +79,13 @@ export function ProjectList(_props: Props) {
     reconnectWs();
     setShowSettings(false);
     refresh();
+  };
+
+  const handleCloseCreate = () => {
+    setShowCreate(false);
+    setName('');
+    setRepoPath('');
+    setInputMode('select');
   };
 
   return (
@@ -93,36 +128,88 @@ export function ProjectList(_props: Props) {
           <>
             {showCreate ? (
               <div class="card" style={{ marginTop: '4px' }}>
-                <label class="label">Name</label>
-                <input
-                  class="input"
-                  value={name}
-                  onInput={(e) => setName((e.target as HTMLInputElement).value)}
-                  placeholder="my-project"
-                />
-                <label class="label" style={{ marginTop: '8px' }}>Repo Path</label>
-                <input
-                  class="input"
-                  value={repoPath}
-                  onInput={(e) => setRepoPath((e.target as HTMLInputElement).value)}
-                  placeholder="/home/user/project"
-                />
-                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                  <button
-                    class="btn btn-primary"
-                    style={{ flex: 1 }}
-                    onClick={handleCreate}
-                    disabled={creating}
-                  >
-                    {creating ? 'Adding...' : 'Add'}
-                  </button>
-                  <button
-                    class="btn"
-                    onClick={() => { setShowCreate(false); setName(''); setRepoPath(''); }}
-                  >
-                    Cancel
-                  </button>
-                </div>
+                {/* Tab buttons */}
+                {discovered.length > 0 && (
+                  <div class="discover-tabs">
+                    <button
+                      class={`btn btn-sm ${inputMode === 'select' ? 'btn-tab-active' : ''}`}
+                      onClick={() => setInputMode('select')}
+                    >
+                      Select
+                    </button>
+                    <button
+                      class={`btn btn-sm ${inputMode === 'manual' ? 'btn-tab-active' : ''}`}
+                      onClick={() => setInputMode('manual')}
+                    >
+                      Manual
+                    </button>
+                  </div>
+                )}
+
+                {inputMode === 'select' ? (
+                  // Discovery list
+                  <div>
+                    {loadingDiscover ? (
+                      <div class="loading">Searching...</div>
+                    ) : discovered.length === 0 ? (
+                      <div class="empty" style={{ padding: '12px 0' }}>No Claude Code projects found.</div>
+                    ) : (
+                      <div class="discover-list">
+                        {discovered.map((dp) => (
+                          <button
+                            key={dp.path}
+                            class="discover-item"
+                            onClick={() => handleSelectProject(dp)}
+                          >
+                            <div class="discover-item-name">{dp.name}</div>
+                            <div class="discover-item-path">{dp.path}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      class="btn"
+                      style={{ width: '100%', marginTop: '8px' }}
+                      onClick={handleCloseCreate}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  // Manual input form
+                  <div>
+                    <label class="label">Name</label>
+                    <input
+                      class="input"
+                      value={name}
+                      onInput={(e) => setName((e.target as HTMLInputElement).value)}
+                      placeholder="my-project"
+                    />
+                    <label class="label" style={{ marginTop: '8px' }}>Repo Path</label>
+                    <input
+                      class="input"
+                      value={repoPath}
+                      onInput={(e) => setRepoPath((e.target as HTMLInputElement).value)}
+                      placeholder="/home/user/project"
+                    />
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                      <button
+                        class="btn btn-primary"
+                        style={{ flex: 1 }}
+                        onClick={handleCreate}
+                        disabled={creating}
+                      >
+                        {creating ? 'Adding...' : 'Add'}
+                      </button>
+                      <button
+                        class="btn"
+                        onClick={handleCloseCreate}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <button class="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} style={{ width: '100%' }}>

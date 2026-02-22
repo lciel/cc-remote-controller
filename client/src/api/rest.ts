@@ -45,6 +45,11 @@ export interface Job {
   exit_code: number | null;
 }
 
+export interface DiscoveredProject {
+  path: string;
+  name: string;
+}
+
 export interface ClaudeConversation {
   sessionId: string;
   firstMessage: string;
@@ -54,6 +59,8 @@ export interface ClaudeConversation {
 
 export const api = {
   listProjects: () => request<Project[]>('/api/projects'),
+
+  discoverProjects: () => request<DiscoveredProject[]>('/api/projects/discover'),
 
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
 
