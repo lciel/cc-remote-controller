@@ -2,17 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { config } from '../config.js';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Validate that a Claude session ID is a valid UUID.
- */
-function validateSessionId(sessionId: string): void {
-  if (!UUID_RE.test(sessionId)) {
-    throw new Error('Invalid claudeSessionId format');
-  }
-}
+import { isValidUUID } from '../utils/validation.js';
 
 /**
  * Validate that repoPath is an absolute path and exists.
@@ -53,7 +43,9 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
   let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' -p '${escapedPrompt}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
 
   if (claudeSessionId) {
-    validateSessionId(claudeSessionId);
+    if (!isValidUUID(claudeSessionId)) {
+      throw new Error('Invalid claudeSessionId format');
+    }
     cmd += ` --resume '${shellEscape(claudeSessionId)}'`;
   }
 

@@ -47,6 +47,44 @@ function saveEvent(jobId: string, type: string, payload: unknown): void {
   ).run(jobId, new Date().toISOString(), type, JSON.stringify(payload));
 }
 
+/**
+ * Extract and save Claude Code's session ID from stream-json events.
+ * The session_id typically appears in "result" or "init" type events.
+ */
+function extractClaudeSessionId(projectId: string, parsed: Record<string, unknown>): void {
+  const claudeSessionId = parsed.session_id as string | undefined;
+  if (claudeSessionId) {
+    projectService.updateClaudeSessionId(projectId, claudeSessionId);
+  }
+}
+
+/**
+ * Clean up timeout timer and temp images for a finished/canceled job.
+ */
+function cleanupJobResources(jobId: string): void {
+  const timer = jobTimeouts.get(jobId);
+  if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
+  const imgPaths = jobImagePaths.get(jobId);
+  if (imgPaths) { cleanupImages(imgPaths); jobImagePaths.delete(jobId); }
+}
+
+/**
+ * Parse a single stream-json line, persist to DB, and broadcast via WebSocket.
+ */
+function processStreamLine(line: string, jobId: string, projectId: string): void {
+  if (!line.trim()) return;
+  try {
+    const parsed = JSON.parse(line);
+    const eventType = parsed.type || 'unknown';
+    saveEvent(jobId, eventType, parsed);
+    broadcast(projectId, { type: 'event', projectId, jobId, data: parsed });
+    extractClaudeSessionId(projectId, parsed);
+  } catch {
+    saveEvent(jobId, 'raw', { raw: line });
+    broadcast(projectId, { type: 'event', projectId, jobId, data: { type: 'raw', raw: line } });
+  }
+}
+
 export function getJob(jobId: string): Job | null {
   const db = getDb();
   return (db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as Job) || null;
@@ -129,34 +167,9 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutBuffer += chunk.toString();
       const lines = stdoutBuffer.split('\n');
-      // Keep the last incomplete line in the buffer
       stdoutBuffer = lines.pop() || '';
-
       for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line);
-          const eventType = parsed.type || 'unknown';
-          saveEvent(jobId, eventType, parsed);
-          broadcast(projectId, {
-            type: 'event',
-            projectId,
-            jobId,
-            data: parsed,
-          });
-
-          // Capture Claude's session_id from the init or result event
-          extractClaudeSessionId(projectId, parsed);
-        } catch {
-          // Non-JSON line, save as raw
-          saveEvent(jobId, 'raw', { raw: line });
-          broadcast(projectId, {
-            type: 'event',
-            projectId,
-            jobId,
-            data: { type: 'raw', raw: line },
-          });
-        }
+        processStreamLine(line, jobId, projectId);
       }
     });
 
@@ -172,26 +185,9 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
     });
 
     child.on('close', (code) => {
-      // Clear the timeout timer
-      const timer = jobTimeouts.get(jobId);
-      if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
-
-      // Process any remaining buffer
-      if (stdoutBuffer.trim()) {
-        try {
-          const parsed = JSON.parse(stdoutBuffer);
-          saveEvent(jobId, parsed.type || 'unknown', parsed);
-          broadcast(projectId, { type: 'event', projectId, jobId, data: parsed });
-          extractClaudeSessionId(projectId, parsed);
-        } catch {
-          saveEvent(jobId, 'raw', { raw: stdoutBuffer });
-        }
-      }
-
+      processStreamLine(stdoutBuffer, jobId, projectId);
       runningJobs.delete(jobId);
-      // Cleanup temp images
-      const imgPaths = jobImagePaths.get(jobId);
-      if (imgPaths) { cleanupImages(imgPaths); jobImagePaths.delete(jobId); }
+      cleanupJobResources(jobId);
 
       const finalState: JobState = code === 0 ? 'SUCCEEDED' : 'FAILED';
       updateJobState(jobId, finalState, code);
@@ -202,11 +198,8 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
     });
 
     child.on('error', (err) => {
-      const timer = jobTimeouts.get(jobId);
-      if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
       runningJobs.delete(jobId);
-      const imgPaths = jobImagePaths.get(jobId);
-      if (imgPaths) { cleanupImages(imgPaths); jobImagePaths.delete(jobId); }
+      cleanupJobResources(jobId);
       updateJobState(jobId, 'FAILED');
       projectService.updateProjectState(projectId, 'ERROR');
       saveEvent(jobId, 'error', { error: err.message });
@@ -223,17 +216,6 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
   }
 
   return jobId;
-}
-
-/**
- * Extract and save Claude Code's session ID from stream-json events.
- * The session_id typically appears in "result" or "init" type events.
- */
-function extractClaudeSessionId(projectId: string, parsed: Record<string, unknown>): void {
-  const claudeSessionId = parsed.session_id as string | undefined;
-  if (claudeSessionId) {
-    projectService.updateClaudeSessionId(projectId, claudeSessionId);
-  }
 }
 
 export function cancelJob(jobId: string): boolean {
@@ -261,14 +243,7 @@ export function cancelJob(jobId: string): boolean {
     }, 5000);
   }
 
-  // Clear timeout timer
-  const timer = jobTimeouts.get(jobId);
-  if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
-
-  // Cleanup temp images for this job
-  const imgPaths = jobImagePaths.get(jobId);
-  if (imgPaths) { cleanupImages(imgPaths); jobImagePaths.delete(jobId); }
-
+  cleanupJobResources(jobId);
   updateJobState(jobId, 'CANCELED');
   return true;
 }

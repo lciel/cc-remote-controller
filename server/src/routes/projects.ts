@@ -7,9 +7,10 @@ import { listConversations, readConversation, getContextUsage, discoverClaudePro
 
 const router = Router();
 
+import { isValidUUID } from '../utils/validation.js';
+
 const MAX_NAME_LENGTH = 255;
 const MAX_PROMPT_BYTES = 1 * 1024 * 1024; // 1 MB
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // POST /api/projects - Create project
 router.post('/', (req: Request, res: Response) => {
@@ -131,7 +132,7 @@ router.patch('/:id', (req: Request, res: Response) => {
 
   const { claudeSessionId } = req.body;
   if (claudeSessionId !== undefined) {
-    if (claudeSessionId !== null && (typeof claudeSessionId !== 'string' || !UUID_RE.test(claudeSessionId))) {
+    if (claudeSessionId !== null && (typeof claudeSessionId !== 'string' || !isValidUUID(claudeSessionId))) {
       res.status(400).json({ error: 'claudeSessionId must be a valid UUID or null' });
       return;
     }

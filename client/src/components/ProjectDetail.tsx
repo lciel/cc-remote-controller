@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
-import { api, Project, ClaudeConversation, ClaudeHistoryMessage, ContextUsage, ImageAttachment } from '../api/rest';
+import { api, Project, ClaudeHistoryMessage, ContextUsage, ImageAttachment } from '../api/rest';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { LogViewer, ChatMessage, ContentBlock, ErrorBlock } from './LogViewer';
 import { PromptInput } from './PromptInput';
+import { ContextBar } from './ContextBar';
+import { ConversationSwitcher } from './ConversationSwitcher';
 
 interface Props {
   id?: string;
@@ -264,10 +266,7 @@ export function ProjectDetail({ id }: Props) {
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const promptImagesRef = useRef<Map<string, string[]>>(id ? loadStoredImages(id) : new Map());
 
-  // Conversation linking state
   const [showLinkPanel, setShowLinkPanel] = useState(false);
-  const [conversations, setConversations] = useState<ClaudeConversation[]>([]);
-  const [loadingConvs, setLoadingConvs] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 
@@ -420,22 +419,6 @@ export function ProjectDetail({ id }: Props) {
     }
   };
 
-  const handleShowLink = async () => {
-    if (!id) return;
-    setShowLinkPanel(!showLinkPanel);
-    if (!showLinkPanel) {
-      setLoadingConvs(true);
-      try {
-        const convs = await api.getClaudeConversations(id);
-        setConversations(convs);
-      } catch {
-        setConversations([]);
-      } finally {
-        setLoadingConvs(false);
-      }
-    }
-  };
-
   const handleLinkConversation = async (claudeSessionId: string) => {
     if (!id) return;
     try {
@@ -478,7 +461,7 @@ export function ProjectDetail({ id }: Props) {
             {project.state}
           </span>
         </div>
-        <button class="btn-icon header-icon-btn" onClick={handleShowLink} title="Switch conversation">
+        <button class="btn-icon header-icon-btn" onClick={() => setShowLinkPanel(!showLinkPanel)} title="Switch conversation">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
             <rect x="1" y="1" width="15" height="12" rx="2.5" />
             <path style={{ fill: 'var(--bg-primary)' }} d="M9.5 7H19.5A2.5 2.5 0 0122 9.5V16.5A2.5 2.5 0 0119.5 19H14L12 22V19H9.5A2.5 2.5 0 017 16.5V9.5A2.5 2.5 0 019.5 7Z" />
@@ -486,70 +469,17 @@ export function ProjectDetail({ id }: Props) {
         </button>
       </header>
 
-      {/* Context usage bar */}
-      {project.claude_session_id && contextUsage && (() => {
-        const pct = Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100));
-        const level = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'normal';
-        return (
-          <div class={`context-bar context-${level}`}>
-            {contextUsage.model && (
-              <>
-                <span class="context-model">
-                  {contextUsage.model.replace('claude-', '')}
-                </span>
-                <span class="context-sep">|</span>
-              </>
-            )}
-            <span class="context-meter">
-              <span class="context-bar-bg">
-                <span class="context-bar-fill" style={{ width: `${pct}%` }} />
-              </span>
-              {Math.round(contextUsage.used / 1000)}k/{Math.round(contextUsage.limit / 1000)}k ({pct}%)
-            </span>
-          </div>
-        );
-      })()}
-
-      {/* Conversation switcher modal */}
-      {showLinkPanel && (
-        <div class="modal-overlay" onClick={() => setShowLinkPanel(false)}>
-          <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div class="modal-header">
-              <div class="label">Claude Code Sessions</div>
-              <button class="btn-icon modal-close" onClick={() => setShowLinkPanel(false)}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <button
-              class="conv-item conv-new"
-              onClick={() => handleLinkConversation('')}
-            >
-              + New Conversation
-            </button>
-            {loadingConvs ? (
-              <div class="loading">Searching sessions...</div>
-            ) : conversations.length === 0 ? (
-              <div class="empty" style={{ padding: '12px' }}>No sessions found for this repo.</div>
-            ) : (
-              <div class="conv-list">
-                {conversations.map((conv) => (
-                  <button
-                    key={conv.sessionId}
-                    class={`conv-item ${project.claude_session_id === conv.sessionId ? 'conv-active' : ''}`}
-                    onClick={() => handleLinkConversation(conv.sessionId)}
-                  >
-                    <div class="conv-id">{conv.sessionId.slice(0, 8)}...</div>
-                    <div class="conv-preview">{conv.firstMessage}</div>
-                    <div class="conv-time">{new Date(conv.modifiedAt).toLocaleString()}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      {project.claude_session_id && contextUsage && (
+        <ContextBar contextUsage={contextUsage} />
       )}
+
+      <ConversationSwitcher
+        projectId={id!}
+        currentSessionId={project.claude_session_id}
+        isOpen={showLinkPanel}
+        onClose={() => setShowLinkPanel(false)}
+        onSelect={handleLinkConversation}
+      />
 
       <div class="project-detail-body">
         <LogViewer
