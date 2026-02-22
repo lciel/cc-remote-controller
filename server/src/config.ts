@@ -15,4 +15,5 @@ export const config = {
   authTokenGenerated,
   hostUrl: (process.env.HOST_URL || '').trim(),
   dbPath: path.resolve(ROOT_DIR, process.env.DB_PATH || './data/sessions.db'),
+  claudePath: (process.env.CLAUDE_PATH || '').trim() || 'claude',
 };

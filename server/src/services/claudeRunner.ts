@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { config } from '../config.js';
 
 /**
  * Validate that repoPath is an absolute path and exists.
@@ -37,7 +38,8 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
   validateRepoPath(repoPath);
 
   const escapedPrompt = shellEscape(prompt);
-  let cmd = `cd '${shellEscape(repoPath)}' && claude -p '${escapedPrompt}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
+  const claudeBin = shellEscape(config.claudePath);
+  let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' -p '${escapedPrompt}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
 
   if (claudeSessionId) {
     cmd += ` --resume '${shellEscape(claudeSessionId)}'`;
