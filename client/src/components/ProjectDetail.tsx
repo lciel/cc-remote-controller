@@ -346,7 +346,8 @@ export function ProjectDetail({ id }: Props) {
         if (id && updated) {
           if (updated.claude_session_id) {
             loadHistory(updated).then(() => {
-              setStreamEvents([]);
+              // Keep stderr events since JSONL history doesn't include them
+              setStreamEvents(prev => prev.filter(e => e.type === 'stderr'));
               currentJobPromptRef.current = null;
             }).catch(() => {});
             api.getContextUsage(id).then(setContextUsage).catch(() => {});
