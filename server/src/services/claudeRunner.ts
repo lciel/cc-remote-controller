@@ -47,7 +47,8 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
   const env = { ...process.env };
   delete env.CLAUDECODE;
 
-  const child = spawn('bash', ['-lc', cmd], {
+  const shell = process.env.SHELL || 'bash';
+  const child = spawn(shell, ['-lc', cmd], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
     env,
