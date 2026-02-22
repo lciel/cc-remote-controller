@@ -6,6 +6,14 @@ import jobsRouter from './routes/jobs.js';
 
 const app = express();
 
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:");
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 // Serve static files from client build (production)

@@ -11,6 +11,10 @@ import { ImageAttachment, saveImages, cleanupImages, cleanupUploadDir } from './
 const runningJobs = new Map<string, ChildProcess>();
 // Track image paths per job for cleanup
 const jobImagePaths = new Map<string, string[]>();
+// Track timeout timers per job
+const jobTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+const JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export function createJob(projectId: string, prompt: string): Job {
   const db = getDb();
@@ -104,6 +108,22 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
     });
     runningJobs.set(jobId, child);
 
+    // Wall-clock timeout: kill the process if it runs too long
+    const timeout = setTimeout(() => {
+      if (runningJobs.has(jobId)) {
+        saveEvent(jobId, 'stderr', { stderr: `Job timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
+        broadcast(projectId, {
+          type: 'event', projectId, jobId,
+          data: { type: 'stderr', stderr: `Job timed out after ${JOB_TIMEOUT_MS / 60000} minutes` },
+        });
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (runningJobs.has(jobId)) child.kill('SIGKILL');
+        }, 5000);
+      }
+    }, JOB_TIMEOUT_MS);
+    jobTimeouts.set(jobId, timeout);
+
     let stdoutBuffer = '';
 
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -152,6 +172,10 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
     });
 
     child.on('close', (code) => {
+      // Clear the timeout timer
+      const timer = jobTimeouts.get(jobId);
+      if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
+
       // Process any remaining buffer
       if (stdoutBuffer.trim()) {
         try {
@@ -178,6 +202,8 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
     });
 
     child.on('error', (err) => {
+      const timer = jobTimeouts.get(jobId);
+      if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
       runningJobs.delete(jobId);
       const imgPaths = jobImagePaths.get(jobId);
       if (imgPaths) { cleanupImages(imgPaths); jobImagePaths.delete(jobId); }
@@ -235,6 +261,10 @@ export function cancelJob(jobId: string): boolean {
     }, 5000);
   }
 
+  // Clear timeout timer
+  const timer = jobTimeouts.get(jobId);
+  if (timer) { clearTimeout(timer); jobTimeouts.delete(jobId); }
+
   // Cleanup temp images for this job
   const imgPaths = jobImagePaths.get(jobId);
   if (imgPaths) { cleanupImages(imgPaths); jobImagePaths.delete(jobId); }
@@ -247,6 +277,8 @@ export function cancelJob(jobId: string): boolean {
  * Cleanup all running processes (called on server shutdown).
  */
 export function cleanupAll(): void {
+  for (const [, timer] of jobTimeouts) clearTimeout(timer);
+  jobTimeouts.clear();
   for (const [jobId, child] of runningJobs) {
     child.kill('SIGTERM');
     runningJobs.delete(jobId);

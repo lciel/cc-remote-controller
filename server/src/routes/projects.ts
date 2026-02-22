@@ -7,6 +7,10 @@ import { listConversations, readConversation, getContextUsage, discoverClaudePro
 
 const router = Router();
 
+const MAX_NAME_LENGTH = 255;
+const MAX_PROMPT_BYTES = 1 * 1024 * 1024; // 1 MB
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // POST /api/projects - Create project
 router.post('/', (req: Request, res: Response) => {
   const { name, repoPath } = req.body;
@@ -14,12 +18,16 @@ router.post('/', (req: Request, res: Response) => {
     res.status(400).json({ error: 'name and repoPath are required' });
     return;
   }
+  if (typeof name !== 'string' || name.length > MAX_NAME_LENGTH) {
+    res.status(400).json({ error: `name must be 1-${MAX_NAME_LENGTH} characters` });
+    return;
+  }
   if (!path.isAbsolute(repoPath)) {
     res.status(400).json({ error: 'repoPath must be an absolute path' });
     return;
   }
   if (!fs.existsSync(repoPath)) {
-    res.status(400).json({ error: `repoPath does not exist: ${repoPath}` });
+    res.status(400).json({ error: 'repoPath does not exist' });
     return;
   }
   const project = projectService.createProject(name, repoPath);
@@ -78,8 +86,12 @@ router.post('/:id/run', (req: Request, res: Response) => {
   }
 
   const { prompt, images } = req.body;
-  if (!prompt) {
+  if (!prompt || typeof prompt !== 'string') {
     res.status(400).json({ error: 'prompt is required' });
+    return;
+  }
+  if (Buffer.byteLength(prompt, 'utf-8') > MAX_PROMPT_BYTES) {
+    res.status(400).json({ error: 'prompt exceeds maximum size (1 MB)' });
     return;
   }
 
@@ -119,6 +131,10 @@ router.patch('/:id', (req: Request, res: Response) => {
 
   const { claudeSessionId } = req.body;
   if (claudeSessionId !== undefined) {
+    if (claudeSessionId !== null && (typeof claudeSessionId !== 'string' || !UUID_RE.test(claudeSessionId))) {
+      res.status(400).json({ error: 'claudeSessionId must be a valid UUID or null' });
+      return;
+    }
     projectService.updateClaudeSessionId(project.id, claudeSessionId);
   }
 
