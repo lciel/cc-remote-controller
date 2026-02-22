@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks'
 import { api, Project, ClaudeConversation, ClaudeHistoryMessage, ContextUsage, ImageAttachment } from '../api/rest';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
-import { LogViewer, ChatMessage, ContentBlock } from './LogViewer';
+import { LogViewer, ChatMessage, ContentBlock, ErrorBlock } from './LogViewer';
 import { PromptInput } from './PromptInput';
 
 interface Props {
@@ -127,6 +127,9 @@ function buildChatMessages(rawEvents: RawEvent[], promptImages?: Map<string, str
       if (delta?.type === 'text_delta') {
         textBuffer += delta.text as string;
       }
+    } else if (parsed.type === 'stderr') {
+      flushText();
+      blocks.push({ type: 'error', text: (parsed.stderr as string || '').trim() } as ErrorBlock);
     } else if (parsed.type === 'result') {
       // Skip - duplicates assistant content
     } else if (parsed.type === 'raw') {

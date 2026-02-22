@@ -13,7 +13,12 @@ export interface ToolBlock {
   detail: string;
 }
 
-export type ContentBlock = TextBlock | ToolBlock;
+export interface ErrorBlock {
+  type: 'error';
+  text: string;
+}
+
+export type ContentBlock = TextBlock | ToolBlock | ErrorBlock;
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -46,6 +51,9 @@ function renderBlock(block: ContentBlock, key: number) {
   if (block.type === 'text') {
     const html = renderMarkdown(block.text);
     return <div key={key} class="chat-content" dangerouslySetInnerHTML={{ __html: html }} />;
+  }
+  if (block.type === 'error') {
+    return <div key={key} class="chat-error">{block.text}</div>;
   }
   if (block.name === 'AskUserQuestion') {
     const html = renderMarkdown(block.detail);

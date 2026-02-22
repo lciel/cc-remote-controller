@@ -421,6 +421,18 @@ a {
   border-radius: 12px;
 }
 
+.chat-error {
+  margin: 6px 0;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  color: var(--color-error);
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .new-messages-btn {
   position: sticky;
   bottom: 8px;
