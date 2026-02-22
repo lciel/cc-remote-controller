@@ -69,9 +69,17 @@ function shutdown() {
   console.log('\nShutting down...');
   cleanupAll();
   closeDb();
+  // Close all WebSocket connections so server.close() can complete
+  for (const client of wss.clients) {
+    client.close();
+  }
   server.close(() => {
     process.exit(0);
   });
+  // Force exit if server.close() takes too long
+  setTimeout(() => {
+    process.exit(1);
+  }, 3000);
 }
 
 process.on('SIGINT', shutdown);
