@@ -314,6 +314,7 @@ export function ProjectDetail({ id }: Props) {
       setProject((prev) => (prev ? { ...prev, state: m.state as string } : prev));
     } else if (m.type === 'job_started') {
       currentJobPromptRef.current = m.prompt as string || null;
+      setProject((prev) => prev ? { ...prev, last_job_id: m.jobId as string } : prev);
     } else if (m.type === 'event') {
       setPendingPrompt(null);
       const data = m.data as Record<string, unknown>;
