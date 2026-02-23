@@ -175,6 +175,11 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
       </div>
       {lightboxSrc && (
         <div class="lightbox-overlay" onClick={() => setLightboxSrc(null)}>
+          <button class="lightbox-close" onClick={() => setLightboxSrc(null)}>
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
           <img src={lightboxSrc} alt="" class="lightbox-img" onClick={(e) => e.stopPropagation()} />
         </div>
       )}

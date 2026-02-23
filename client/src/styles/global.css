@@ -829,6 +829,22 @@ a {
   cursor: pointer;
 }
 
+.lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+}
+
 .lightbox-img {
   max-width: 90vw;
   max-height: 90vh;

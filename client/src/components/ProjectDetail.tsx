@@ -46,7 +46,7 @@ function formatToolDetail(name: string, input: Record<string, unknown>): string 
         }
       }
     }
-    lines.push('_(自動選択します)_');
+    lines.push('_ヘッドレスモードのため Claude が代理回答します_');
     return lines.join('\n');
   }
   if (name === 'EnterPlanMode') return '→ Plan mode';
