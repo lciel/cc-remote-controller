@@ -16,6 +16,10 @@
 
 ---
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Screenshot" width="300" />
+</p>
+
 ## Features
 
 - スマートフォンから Claude Code を操作（プロンプト送信・リアルタイムログ閲覧）
