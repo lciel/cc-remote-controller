@@ -6,7 +6,7 @@ interface Props {
 
 export function ContextBar({ contextUsage }: Props) {
   const pct = Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100));
-  const level = pct >= 90 ? 'danger' : pct >= 70 ? 'warning' : 'normal';
+  const level = pct >= 80 ? 'danger' : pct >= 60 ? 'warning' : 'normal';
 
   return (
     <div class={`context-bar context-${level}`}>
