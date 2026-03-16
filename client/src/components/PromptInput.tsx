@@ -131,7 +131,6 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
         <button
           class="btn-icon image-attach-btn"
           onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
           title="Attach image"
         >
           +
@@ -147,7 +146,6 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
             autoResize();
           }}
           placeholder="Enter prompt..."
-          disabled={disabled}
           rows={1}
         />
         {running ? (

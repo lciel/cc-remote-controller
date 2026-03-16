@@ -190,7 +190,9 @@ export function LogViewer({ messages, loading, loadingLabel }: Props) {
       ))}
       {loading && (
         <div class="loading-indicator">
-          <span class="loading-dot" />
+          <span class="loading-dots">
+            <span /><span /><span />
+          </span>
           {loadingLabel || 'Thinking...'}
         </div>
       )}

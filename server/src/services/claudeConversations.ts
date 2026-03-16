@@ -130,6 +130,7 @@ export async function getContextUsage(repoPath: string, sessionId: string): Prom
     JOIN jobs j ON e.job_id = j.id
     JOIN projects p ON j.project_id = p.id
     WHERE p.claude_session_id = ? AND e.type = 'system'
+      AND e.payload_json LIKE '%"subtype":"init"%'
     ORDER BY e.id DESC LIMIT 1
   `).get(sessionId) as { payload_json: string } | undefined;
 

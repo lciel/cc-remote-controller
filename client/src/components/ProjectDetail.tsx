@@ -78,7 +78,7 @@ function stripImagePaths(text: string): { text: string; hadImages: boolean } {
   return { text, hadImages: false };
 }
 
-function buildChatMessages(rawEvents: RawEvent[], promptImages?: Map<string, string[]>): ChatMessage[] {
+function buildChatMessages(rawEvents: RawEvent[], promptImages?: Map<string, string[]>, skipUserPrompts = false): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let currentJobId: string | null = null;
   let blocks: ContentBlock[] = [];
@@ -103,7 +103,7 @@ function buildChatMessages(rawEvents: RawEvent[], promptImages?: Map<string, str
     if (raw.job_id !== currentJobId) {
       flushAssistant();
       currentJobId = raw.job_id;
-      if (raw.job_prompt) {
+      if (raw.job_prompt && !skipUserPrompts) {
         const { text: cleanPrompt, hadImages } = stripImagePaths(raw.job_prompt);
         const imgs = promptImages?.get(cleanPrompt);
         messages.push({
@@ -284,6 +284,7 @@ export function ProjectDetail({ id }: Props) {
   const [showLinkPanel, setShowLinkPanel] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
   const contextLimitRef = useRef(200000);
 
   const loadHistory = useCallback(async (proj: Project) => {
@@ -299,11 +300,23 @@ export function ProjectDetail({ id }: Props) {
       const proj = await api.getProject(id);
       setProject(proj);
 
+      // Clear stale streaming state on reload (e.g. returning from background)
+      // pendingPrompt is always cleared — JSONL/DB history already contains the user prompt
+      setPendingPrompt(null);
+      const isIdle = proj.state !== 'RUNNING' && proj.state !== 'STOPPING';
+      setJobActive(!isIdle);
+      setStreamEvents([]);
+
+      api.getGitBranch(proj.id).then(r => setGitBranch(r.branch)).catch(() => {});
+
       if (proj.claude_session_id) {
         // Linked: Claude JSONL is the single source of truth
         await loadHistory(proj);
         setRawEvents([]);
-        api.getContextUsage(proj.id).then(setContextUsage).catch(() => {});
+        api.getContextUsage(proj.id).then(usage => {
+          setContextUsage(usage);
+          if (usage?.limit) contextLimitRef.current = usage.limit;
+        }).catch(() => {});
       } else {
         // Unlinked: use PWA events only
         const evts = await api.getProjectEvents(id);
@@ -329,9 +342,13 @@ export function ProjectDetail({ id }: Props) {
       setProject((prev) => (prev ? { ...prev, state: m.state as string } : prev));
     } else if (m.type === 'job_started') {
       currentJobPromptRef.current = m.prompt as string || null;
-      setProject((prev) => prev ? { ...prev, last_job_id: m.jobId as string } : prev);
+      // Clear pendingPrompt for unlinked mode (stream events will show the prompt via job_prompt).
+      // For linked mode, pendingPrompt stays until job_finished when JSONL is reloaded.
+      setProject((prev) => {
+        if (prev && !prev.claude_session_id) setPendingPrompt(null);
+        return prev ? { ...prev, last_job_id: m.jobId as string } : prev;
+      });
     } else if (m.type === 'event') {
-      setPendingPrompt(null);
       const data = m.data as Record<string, unknown>;
       // Extract context limit from system init event
       if (data.type === 'system' && data.subtype === 'init' && data.model) {
@@ -359,6 +376,7 @@ export function ProjectDetail({ id }: Props) {
         },
       ]);
     } else if (m.type === 'job_finished') {
+      setPendingPrompt(null);
       setJobActive(false);
       setProject((prev) => {
         const updated = prev ? { ...prev, state: 'IDLE' as const } : prev;
@@ -370,7 +388,10 @@ export function ProjectDetail({ id }: Props) {
               setStreamEvents(prev => prev.filter(e => e.type === 'stderr'));
               currentJobPromptRef.current = null;
             }).catch(() => {});
-            api.getContextUsage(id).then(setContextUsage).catch(() => {});
+            api.getContextUsage(id).then(usage => {
+              setContextUsage(usage);
+              if (usage?.limit) contextLimitRef.current = usage.limit;
+            }).catch(() => {});
           } else {
             api.getProjectEvents(id).then((evts) => {
               setRawEvents(evts as RawEvent[]);
@@ -387,21 +408,23 @@ export function ProjectDetail({ id }: Props) {
   const chatMessages = useMemo(() => {
     let msgs: ChatMessage[];
     const imgMap = promptImagesRef.current;
+    const pendingMsg: ChatMessage | null = pendingPrompt ? {
+      role: 'user',
+      content: [{ type: 'text', text: pendingPrompt }],
+      images: pendingImages.length > 0 ? pendingImages : undefined,
+    } : null;
+
     if (historyMessages.length > 0) {
       // Linked: JSONL history is the source, append only live streaming
-      const liveMessages = buildChatMessages(streamEvents, imgMap);
-      msgs = [...historyMessages, ...liveMessages];
+      // Skip user prompts from stream — already included in JSONL history
+      // Insert pendingPrompt between history and live messages so it appears
+      // above Claude's response, not below it
+      const liveMessages = buildChatMessages(streamEvents, imgMap, true);
+      msgs = [...historyMessages, ...(pendingMsg ? [pendingMsg] : []), ...liveMessages];
     } else {
       // Unlinked: PWA events only
       msgs = buildChatMessages([...rawEvents, ...streamEvents], imgMap);
-    }
-    // Show pending prompt immediately while waiting for server response
-    if (pendingPrompt) {
-      msgs = [...msgs, {
-        role: 'user',
-        content: [{ type: 'text', text: pendingPrompt }],
-        images: pendingImages.length > 0 ? pendingImages : undefined,
-      }];
+      if (pendingMsg) msgs = [...msgs, pendingMsg];
     }
     return msgs;
   }, [historyMessages, rawEvents, streamEvents, pendingPrompt, pendingImages]);
@@ -455,7 +478,10 @@ export function ProjectDetail({ id }: Props) {
       if (claudeSessionId) {
         // Load history for the selected conversation
         await loadHistory(updated);
-        api.getContextUsage(id).then(setContextUsage).catch(() => {});
+        api.getContextUsage(id).then(usage => {
+              setContextUsage(usage);
+              if (usage?.limit) contextLimitRef.current = usage.limit;
+            }).catch(() => {});
       }
     } catch {
       alert('Failed to switch conversation');
@@ -489,8 +515,8 @@ export function ProjectDetail({ id }: Props) {
         </button>
       </header>
 
-      {project.claude_session_id && contextUsage && (
-        <ContextBar contextUsage={contextUsage} />
+      {(contextUsage || gitBranch) && (
+        <ContextBar contextUsage={contextUsage} gitBranch={gitBranch} />
       )}
 
       <ConversationSwitcher

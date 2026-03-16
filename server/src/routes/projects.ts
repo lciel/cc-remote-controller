@@ -186,4 +186,26 @@ router.get('/:id/context', async (req: Request, res: Response) => {
   res.json(usage);
 });
 
+// GET /api/projects/:id/git-branch - Get current git branch
+router.get('/:id/git-branch', (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  try {
+    const headPath = path.join(project.repo_path, '.git', 'HEAD');
+    if (!fs.existsSync(headPath)) {
+      res.json({ branch: null });
+      return;
+    }
+    const head = fs.readFileSync(headPath, 'utf-8').trim();
+    const match = head.match(/^ref: refs\/heads\/(.+)$/);
+    res.json({ branch: match ? match[1] : null });
+  } catch {
+    res.json({ branch: null });
+  }
+});
+
 export default router;

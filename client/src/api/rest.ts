@@ -102,6 +102,9 @@ export const api = {
   getContextUsage: (projectId: string) =>
     request<ContextUsage | null>(`/api/projects/${projectId}/context`),
 
+  getGitBranch: (projectId: string) =>
+    request<{ branch: string | null }>(`/api/projects/${projectId}/git-branch`),
+
   deleteProject: (projectId: string) =>
     request<{ message: string }>(`/api/projects/${projectId}`, {
       method: 'DELETE',
