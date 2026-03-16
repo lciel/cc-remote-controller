@@ -2,12 +2,27 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import readline from 'readline';
+import { getDb } from '../db/index.js';
 
 export interface ClaudeConversation {
   sessionId: string;
   firstMessage: string;
   timestamp: string;
   modifiedAt: string;
+}
+
+/**
+ * Parse context window limit from model string.
+ * e.g. "claude-opus-4-6[1m]" → 1000000, "claude-sonnet-4-6" → 200000
+ */
+function parseContextLimit(model: string): number {
+  const match = model.match(/\[(\d+)([km])\]/i);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    return unit === 'm' ? num * 1000000 : num * 1000;
+  }
+  return 200000;
 }
 
 /**
@@ -108,10 +123,28 @@ export async function getContextUsage(repoPath: string, sessionId: string): Prom
     return null;
   }
 
-  // Read file in reverse to find the last assistant entry with usage
+  // Get context limit from DB system init event (stream-json includes model with context suffix)
+  const db = getDb();
+  const initRow = db.prepare(`
+    SELECT e.payload_json FROM events e
+    JOIN jobs j ON e.job_id = j.id
+    JOIN projects p ON j.project_id = p.id
+    WHERE p.claude_session_id = ? AND e.type = 'system'
+    ORDER BY e.id DESC LIMIT 1
+  `).get(sessionId) as { payload_json: string } | undefined;
+
+  let contextLimit = 200000;
+  if (initRow) {
+    try {
+      const payload = JSON.parse(initRow.payload_json);
+      if (payload.model) contextLimit = parseContextLimit(payload.model);
+    } catch { /* ignore */ }
+  }
+
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n').filter((l) => l.trim());
 
+  // Read file in reverse to find the last assistant entry with usage
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
       const parsed = JSON.parse(lines[i]);
@@ -121,7 +154,7 @@ export async function getContextUsage(repoPath: string, sessionId: string): Prom
           + (usage.cache_creation_input_tokens || 0)
           + (usage.cache_read_input_tokens || 0);
         const model = (parsed.message?.model as string) || null;
-        return { used, limit: 200000, model };
+        return { used, limit: contextLimit, model };
       }
     } catch {
       continue;

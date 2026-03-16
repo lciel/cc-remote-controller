@@ -54,6 +54,21 @@ function formatToolDetail(name: string, input: Record<string, unknown>): string 
   return JSON.stringify(input, null, 2).slice(0, 500);
 }
 
+/**
+ * Parse context window limit from model string.
+ * e.g. "claude-opus-4-6[1m]" → 1000000, "claude-sonnet-4-6" → 200000
+ */
+function parseContextLimit(model: string | null): number {
+  if (!model) return 200000;
+  const match = model.match(/\[(\d+)([km])\]/i);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    return unit === 'm' ? num * 1000000 : num * 1000;
+  }
+  return 200000;
+}
+
 /** Strip "[Attached images ...]" section appended by server */
 function stripImagePaths(text: string): { text: string; hadImages: boolean } {
   const re = /\n?\n?\[Attached images - use Read tool to view:\]\n[\s\S]*$/;
@@ -269,6 +284,7 @@ export function ProjectDetail({ id }: Props) {
   const [showLinkPanel, setShowLinkPanel] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const contextLimitRef = useRef(200000);
 
   const loadHistory = useCallback(async (proj: Project) => {
     if (proj.claude_session_id) {
@@ -317,6 +333,10 @@ export function ProjectDetail({ id }: Props) {
     } else if (m.type === 'event') {
       setPendingPrompt(null);
       const data = m.data as Record<string, unknown>;
+      // Extract context limit from system init event
+      if (data.type === 'system' && data.subtype === 'init' && data.model) {
+        contextLimitRef.current = parseContextLimit(data.model as string);
+      }
       // Extract context usage from assistant events
       if (data.type === 'assistant') {
         const msg = data.message as Record<string, unknown> | undefined;
@@ -326,7 +346,7 @@ export function ProjectDetail({ id }: Props) {
             + (usage.cache_creation_input_tokens || 0)
             + (usage.cache_read_input_tokens || 0);
           const model = (msg?.model as string) || null;
-          setContextUsage({ used, limit: 200000, model });
+          setContextUsage({ used, limit: contextLimitRef.current, model });
         }
       }
       setStreamEvents((prev) => [
