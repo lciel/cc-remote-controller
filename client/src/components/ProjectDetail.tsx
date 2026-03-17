@@ -27,8 +27,14 @@ function formatToolDetail(name: string, input: Record<string, unknown>): string 
   if (name === 'Bash' && input.command) return `$ ${input.command}`;
   if (name === 'Edit' && input.file_path) {
     let s = `${input.file_path}`;
-    if (input.old_string) s += `\n- ${(input.old_string as string).slice(0, 200)}`;
-    if (input.new_string) s += `\n+ ${(input.new_string as string).slice(0, 200)}`;
+    if (input.old_string) {
+      const lines = (input.old_string as string).slice(0, 500).split('\n');
+      s += '\n' + lines.map(l => `- ${l}`).join('\n');
+    }
+    if (input.new_string) {
+      const lines = (input.new_string as string).slice(0, 500).split('\n');
+      s += '\n' + lines.map(l => `+ ${l}`).join('\n');
+    }
     return s;
   }
   if (name === 'Write' && input.file_path) return `${input.file_path}`;
@@ -49,6 +55,8 @@ function formatToolDetail(name: string, input: Record<string, unknown>): string 
     lines.push('_ヘッドレスモードのため Claude が代理回答します_');
     return lines.join('\n');
   }
+  if (name === 'Agent' && input.description) return input.description as string;
+  if (name === 'TodoWrite') return 'Update tasks';
   if (name === 'EnterPlanMode') return '→ Plan mode';
   if (name === 'ExitPlanMode') return '→ Plan ready';
   return JSON.stringify(input, null, 2).slice(0, 500);
@@ -131,10 +139,14 @@ function buildChatMessages(rawEvents: RawEvent[], promptImages?: Map<string, str
           } else if (b.type === 'tool_use') {
             flushText();
             const input = (b.input || {}) as Record<string, unknown>;
+            const name = b.name as string;
+            const keepInput = name === 'Agent' || name === 'TodoWrite';
             blocks.push({
               type: 'tool',
-              name: b.name as string,
-              detail: formatToolDetail(b.name as string, input),
+              name,
+              detail: formatToolDetail(name, input),
+              toolUseId: b.id as string | undefined,
+              ...(keepInput && { input }),
             });
           }
         }
@@ -190,10 +202,14 @@ function buildHistoryMessages(history: ClaudeHistoryMessage[], promptImages?: Ma
           blocks.push({ type: 'text', text: b.text as string });
         } else if (b.type === 'tool_use') {
           const input = (b.input || {}) as Record<string, unknown>;
+          const name = b.name as string;
+          const keepInput = name === 'Agent' || name === 'TodoWrite';
           blocks.push({
             type: 'tool',
-            name: b.name as string,
-            detail: formatToolDetail(b.name as string, input),
+            name,
+            detail: formatToolDetail(name, input),
+            toolUseId: b.id as string | undefined,
+            ...(keepInput && { input }),
           });
         }
       }
@@ -532,6 +548,7 @@ export function ProjectDetail({ id }: Props) {
               messages={chatMessages}
               loading={!!pendingPrompt || jobActive}
               loadingLabel={pendingPrompt ? 'Thinking...' : 'Running...'}
+              projectId={id}
             />
         <PromptInput projectId={id} onSubmit={handleRun} onCancel={handleCancel} disabled={isRunning} running={isRunning} />
       </div>

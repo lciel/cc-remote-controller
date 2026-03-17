@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import * as projectService from '../services/projectService.js';
 import * as jobService from '../services/jobService.js';
-import { listConversations, readConversation, getContextUsage, discoverClaudeProjects } from '../services/claudeConversations.js';
+import { listConversations, readConversation, getContextUsage, getToolResult, discoverClaudeProjects } from '../services/claudeConversations.js';
 
 const router = Router();
 
@@ -184,6 +184,22 @@ router.get('/:id/context', async (req: Request, res: Response) => {
 
   const usage = await getContextUsage(project.repo_path, project.claude_session_id);
   res.json(usage);
+});
+
+// GET /api/projects/:id/tool-result/:toolUseId - Get tool result from JSONL
+router.get('/:id/tool-result/:toolUseId', async (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  if (!project.claude_session_id) {
+    res.json({ result: null });
+    return;
+  }
+
+  const result = await getToolResult(project.repo_path, project.claude_session_id, req.params.toolUseId);
+  res.json({ result });
 });
 
 // GET /api/projects/:id/git-branch - Get current git branch

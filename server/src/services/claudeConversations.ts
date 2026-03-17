@@ -292,3 +292,44 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
 
   return messages;
 }
+
+const MAX_TOOL_RESULT_LENGTH = 10000;
+
+/**
+ * Find a tool_result by tool_use_id in a Claude JSONL conversation file.
+ */
+export async function getToolResult(repoPath: string, sessionId: string, toolUseId: string): Promise<string | null> {
+  const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+  const projectDirName = repoPathToProjectDir(repoPath);
+  const filePath = path.join(claudeDir, projectDirName, `${sessionId}.jsonl`);
+
+  if (!fs.existsSync(filePath)) return null;
+
+  const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of rl) {
+      if (!line.includes(toolUseId)) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const content = parsed.message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (block.type === 'tool_result' && block.tool_use_id === toolUseId) {
+            const result = typeof block.content === 'string'
+              ? block.content
+              : JSON.stringify(block.content, null, 2);
+            return result.length > MAX_TOOL_RESULT_LENGTH
+              ? result.slice(0, MAX_TOOL_RESULT_LENGTH) + '\n... (truncated)'
+              : result;
+          }
+        }
+      } catch { continue; }
+    }
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return null;
+}

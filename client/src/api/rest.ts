@@ -105,6 +105,9 @@ export const api = {
   getGitBranch: (projectId: string) =>
     request<{ branch: string | null }>(`/api/projects/${projectId}/git-branch`),
 
+  getToolResult: (projectId: string, toolUseId: string) =>
+    request<{ result: string | null }>(`/api/projects/${projectId}/tool-result/${toolUseId}`),
+
   deleteProject: (projectId: string) =>
     request<{ message: string }>(`/api/projects/${projectId}`, {
       method: 'DELETE',
