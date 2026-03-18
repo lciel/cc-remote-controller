@@ -1,4 +1,4 @@
-import preact from 'preact';
+import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState, useCallback } from 'preact/hooks';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -159,7 +159,7 @@ function renderCodeResult(text: string, filePath?: string) {
 
 const TRUNCATE_HEIGHT = 250;
 
-function ContentModal({ title, children, onClose }: { title: string; children: preact.ComponentChildren; onClose: () => void }) {
+function ContentModal({ title, children, onClose }: { title: string; children: ComponentChildren; onClose: () => void }) {
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
@@ -184,7 +184,7 @@ function ContentModal({ title, children, onClose }: { title: string; children: p
   );
 }
 
-function Truncatable({ children, maxHeight = TRUNCATE_HEIGHT, title = 'Detail' }: { children: preact.ComponentChildren; maxHeight?: number; title?: string }) {
+function Truncatable({ children, maxHeight = TRUNCATE_HEIGHT, title = 'Detail' }: { children: ComponentChildren; maxHeight?: number; title?: string }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [needsTruncate, setNeedsTruncate] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);

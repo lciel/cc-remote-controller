@@ -106,13 +106,16 @@ export function getEventsByJob(jobId: string): unknown[] {
  */
 export function getAllEventsByProject(projectId: string): unknown[] {
   const db = getDb();
+  // Limit to last 10 jobs to avoid browser crash on large projects
   return db.prepare(`
     SELECT e.*, j.prompt as job_prompt
     FROM events e
     JOIN jobs j ON e.job_id = j.id
-    WHERE j.project_id = ?
+    WHERE j.project_id = ? AND j.id IN (
+      SELECT id FROM jobs WHERE project_id = ? ORDER BY id DESC LIMIT 10
+    )
     ORDER BY e.id ASC
-  `).all(projectId);
+  `).all(projectId, projectId);
 }
 
 export function startJob(projectId: string, repoPath: string, prompt: string, images?: ImageAttachment[]): string {
