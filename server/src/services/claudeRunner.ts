@@ -40,7 +40,7 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
 
   const escapedPrompt = shellEscape(prompt);
   const claudeBin = shellEscape(config.claudePath);
-  let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' -p '${escapedPrompt}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
+  let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
 
   if (claudeSessionId) {
     if (!isValidUUID(claudeSessionId)) {
@@ -48,6 +48,10 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
     }
     cmd += ` --resume '${shellEscape(claudeSessionId)}'`;
   }
+
+  // Prepend newline to prevent prompt starting with '-' being parsed as a CLI option
+  const safePrompt = prompt.startsWith('-') ? `\n${escapedPrompt}` : escapedPrompt;
+  cmd += ` -p '${safePrompt}'`;
 
   // Remove CLAUDECODE env var to avoid nested session detection
   const env = { ...process.env };

@@ -558,6 +558,10 @@ export function ProjectDetail({ id }: Props) {
 
       <aside class={`detail-sidebar context-${contextLevel}`}>
         <div class="sidebar-item">
+          <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
           <span class={`state-badge state-${project.state.toLowerCase()}`}>
             {project.state}
           </span>
@@ -591,7 +595,7 @@ export function ProjectDetail({ id }: Props) {
             </svg>
             <div class="sidebar-context">
               <span class="sidebar-label context-meter">
-                {Math.round(contextUsage.used / 1000)}k/{Math.round(contextUsage.limit / 1000)}k
+                {Math.round(contextUsage.used / 1000)}k/{Math.round(contextUsage.limit / 1000)}k ({contextPct}%)
               </span>
               <div class="sidebar-meter">
                 <div class="sidebar-meter-fill" style={{ width: `${contextPct}%` }} />
