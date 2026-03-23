@@ -44,12 +44,15 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const isDesktop = useCallback(() => window.innerWidth >= 768, []);
+
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     const lineHeight = parseInt(getComputedStyle(el).lineHeight) || 20;
-    const maxHeight = lineHeight * 6;
+    const maxLines = isDesktop() ? 12 : 6;
+    const maxHeight = lineHeight * maxLines;
     const clamped = Math.min(el.scrollHeight, maxHeight);
     el.style.height = clamped + 'px';
     el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
@@ -104,8 +107,32 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
-  // No Enter-to-submit — let Enter insert newlines for mobile usability.
-  // Submit only via the Send button.
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // PC only: Enter to submit, Shift+Enter for newline
+    if (!isDesktop()) return;
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  const handlePaste = async (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      const dt = new DataTransfer();
+      imageFiles.forEach(f => dt.items.add(f));
+      await handleFiles(dt.files);
+    }
+  };
 
   return (
     <div class="prompt-input-wrapper">
@@ -145,6 +172,8 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
             if (draftKey) localStorage.setItem(draftKey, v);
             autoResize();
           }}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder="Enter prompt..."
           rows={1}
         />

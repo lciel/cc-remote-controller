@@ -509,6 +509,9 @@ export function ProjectDetail({ id }: Props) {
 
   const isRunning = project.state === 'RUNNING' || project.state === 'STOPPING';
 
+  const contextPct = contextUsage ? Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100)) : 0;
+  const contextLevel = contextPct >= 80 ? 'danger' : contextPct >= 60 ? 'warning' : 'normal';
+
   return (
     <div class="page project-detail">
       <header class="header">
@@ -519,7 +522,7 @@ export function ProjectDetail({ id }: Props) {
         </a>
         <div class="header-info">
           <h1>{project.name}</h1>
-          <span class={`state-badge state-${project.state.toLowerCase()}`}>
+          <span class={`state-badge state-${project.state.toLowerCase()} mobile-only`}>
             {project.state}
           </span>
         </div>
@@ -531,9 +534,11 @@ export function ProjectDetail({ id }: Props) {
         </button>
       </header>
 
-      {(contextUsage || gitBranch) && (
-        <ContextBar contextUsage={contextUsage} gitBranch={gitBranch} />
-      )}
+      <div class="mobile-only">
+        {(contextUsage || gitBranch) && (
+          <ContextBar contextUsage={contextUsage} gitBranch={gitBranch} />
+        )}
+      </div>
 
       <ConversationSwitcher
         projectId={id!}
@@ -552,6 +557,62 @@ export function ProjectDetail({ id }: Props) {
             />
         <PromptInput projectId={id} onSubmit={handleRun} onCancel={handleCancel} disabled={isRunning} running={isRunning} />
       </div>
+
+      <aside class={`detail-sidebar context-${contextLevel}`}>
+        <div class="sidebar-item">
+          <span class={`state-badge state-${project.state.toLowerCase()}`}>
+            {project.state}
+          </span>
+        </div>
+        {contextUsage?.model && (
+          <div class="sidebar-item">
+            <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+              <rect x="8" y="8" width="8" height="8" rx="1" />
+              <line x1="12" y1="2" x2="12" y2="4" />
+              <line x1="12" y1="20" x2="12" y2="22" />
+              <line x1="2" y1="12" x2="4" y2="12" />
+              <line x1="20" y1="12" x2="22" y2="12" />
+              <line x1="7" y1="2" x2="7" y2="4" />
+              <line x1="17" y1="2" x2="17" y2="4" />
+              <line x1="7" y1="20" x2="7" y2="22" />
+              <line x1="17" y1="20" x2="17" y2="22" />
+              <line x1="2" y1="7" x2="4" y2="7" />
+              <line x1="2" y1="17" x2="4" y2="17" />
+              <line x1="20" y1="7" x2="22" y2="7" />
+              <line x1="20" y1="17" x2="22" y2="17" />
+            </svg>
+            <span class="sidebar-label">{contextUsage.model.replace('claude-', '')}</span>
+          </div>
+        )}
+        {contextUsage && (
+          <div class="sidebar-item">
+            <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+            <div class="sidebar-context">
+              <span class="sidebar-label context-meter">
+                {Math.round(contextUsage.used / 1000)}k/{Math.round(contextUsage.limit / 1000)}k
+              </span>
+              <div class="sidebar-meter">
+                <div class="sidebar-meter-fill" style={{ width: `${contextPct}%` }} />
+              </div>
+            </div>
+          </div>
+        )}
+        {gitBranch && (
+          <div class="sidebar-item">
+            <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            <span class="sidebar-label">{gitBranch}</span>
+          </div>
+        )}
+      </aside>
     </div>
   );
 }
