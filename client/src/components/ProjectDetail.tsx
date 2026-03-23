@@ -515,17 +515,15 @@ export function ProjectDetail({ id }: Props) {
   return (
     <div class="page project-detail">
       <header class="header">
-        <a href="/" class="back-link" title="Back">
+        <a href="/" class="back-link" title="Back to project list">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
-        </a>
-        <div class="header-info">
           <h1>{project.name}</h1>
           <span class={`state-badge state-${project.state.toLowerCase()} mobile-only`}>
             {project.state}
           </span>
-        </div>
+        </a>
         <button class="btn-icon header-icon-btn" onClick={() => setShowLinkPanel(!showLinkPanel)} title="Switch conversation">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
             <rect x="1" y="1" width="15" height="12" rx="2.5" />

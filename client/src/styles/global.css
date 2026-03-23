@@ -73,7 +73,29 @@ a {
 .back-link {
   display: flex;
   align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  transition: background 0.15s;
+}
+
+.back-link:active {
+  background: var(--bg-card);
+}
+
+.back-link svg {
   flex-shrink: 0;
+}
+
+.back-link h1 {
+  font-size: 1.2rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn {
@@ -1316,6 +1338,10 @@ a {
 
   .project-card:hover {
     background: var(--bg-secondary);
+  }
+
+  .back-link:hover {
+    background: var(--bg-card);
   }
 
   .discover-item:hover {
