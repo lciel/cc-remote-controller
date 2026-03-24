@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
+import { route } from 'preact-router';
 import { api, Project, ClaudeHistoryMessage, ContextUsage, ImageAttachment } from '../api/rest';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { LogViewer, ChatMessage, ContentBlock, ErrorBlock } from './LogViewer';
 import { PromptInput } from './PromptInput';
-import { ContextBar } from './ContextBar';
+import { ContextBar, contextLevel as getContextLevel } from './ContextBar';
 import { ConversationSwitcher } from './ConversationSwitcher';
+import { BottomSheet } from './BottomSheet';
 
 interface Props {
   id?: string;
@@ -298,6 +300,8 @@ export function ProjectDetail({ id }: Props) {
   const promptImagesRef = useRef<Map<string, string[]>>(id ? loadStoredImages(id) : new Map());
 
   const [showLinkPanel, setShowLinkPanel] = useState(false);
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
@@ -504,28 +508,58 @@ export function ProjectDetail({ id }: Props) {
     }
   };
 
-  if (loading) return <div class="page"><div class="loading">Loading...</div></div>;
+  const handleDeleteProject = async () => {
+    if (!id) return;
+    try {
+      await api.deleteProject(id);
+      route('/');
+    } catch {
+      alert('Failed to delete project');
+    }
+  };
+
+  if (loading) return (
+    <div class="page">
+      <div class="loading-splash">
+        <svg viewBox="0 0 20 14" width="120" height="84" shape-rendering="crispEdges">
+          <rect x="0" y="4" width="3" height="4" fill="#c07a50" />
+          <rect x="17" y="4" width="3" height="4" fill="#c07a50" />
+          <rect x="3" y="0" width="14" height="11" fill="#c07a50" />
+          <rect x="6" y="4" width="2" height="3" fill="#2c1810" />
+          <rect x="13" y="4" width="2" height="3" fill="#2c1810" />
+          <rect x="5" y="11" width="2" height="3" fill="#c07a50" />
+          <rect x="8" y="11" width="2" height="3" fill="#c07a50" />
+          <rect x="11" y="11" width="2" height="3" fill="#c07a50" />
+          <rect x="14" y="11" width="2" height="3" fill="#c07a50" />
+        </svg>
+      </div>
+    </div>
+  );
   if (!project) return <div class="page"><div class="error">Project not found</div></div>;
 
   const isRunning = project.state === 'RUNNING' || project.state === 'STOPPING';
 
   const contextPct = contextUsage ? Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100)) : 0;
-  const contextLevel = contextPct >= 80 ? 'danger' : contextPct >= 60 ? 'warning' : 'normal';
+  const ctxLevel = contextUsage ? getContextLevel(contextUsage.used) : 'normal';
 
   return (
     <div class="page project-detail">
       <header class="header">
-        <a href="/" class="back-link" title="Back to project list">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <a href="/" class="btn-icon header-circle-btn" title="Back to project list">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
-          <h1>{project.name}</h1>
-          <span class={`state-badge state-${project.state.toLowerCase()} mobile-only`}>
-            {project.state}
-          </span>
         </a>
-        <button class="btn-icon header-icon-btn" onClick={() => setShowLinkPanel(!showLinkPanel)} title="Switch conversation">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+        <div class="header-info">
+          <h1 class="header-title-btn" onClick={() => { setShowProjectMenu(true); setConfirmDelete(false); }}>{project.name}</h1>
+          {(contextUsage || gitBranch) && (
+            <div class="header-context mobile-only">
+              <ContextBar contextUsage={contextUsage} gitBranch={gitBranch} state={project.state} />
+            </div>
+          )}
+        </div>
+        <button class="btn-icon header-circle-btn" onClick={() => setShowLinkPanel(!showLinkPanel)} title="Switch conversation">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
             <rect x="1" y="1" width="15" height="12" rx="2.5" />
             <path style={{ fill: 'var(--bg-primary)' }} d="M9.5 7H19.5A2.5 2.5 0 0122 9.5V16.5A2.5 2.5 0 0119.5 19H14L12 22V19H9.5A2.5 2.5 0 017 16.5V9.5A2.5 2.5 0 019.5 7Z" />
           </svg>
@@ -533,8 +567,8 @@ export function ProjectDetail({ id }: Props) {
       </header>
 
       <div class="mobile-only">
-        {(contextUsage || gitBranch) && (
-          <ContextBar contextUsage={contextUsage} gitBranch={gitBranch} />
+        {false && (contextUsage || gitBranch) && (
+          <ContextBar contextUsage={contextUsage} gitBranch={gitBranch} state={project.state} />
         )}
       </div>
 
@@ -546,6 +580,32 @@ export function ProjectDetail({ id }: Props) {
         onSelect={handleLinkConversation}
       />
 
+      {showProjectMenu && (
+        <BottomSheet title={project.name} onClose={() => setShowProjectMenu(false)}>
+          <div style={{ padding: '0 16px' }}>
+            {confirmDelete ? (
+              <div>
+                <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                  Are you sure you want to delete this project?
+                </p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button class="btn btn-danger" style={{ flex: 1 }} onClick={handleDeleteProject}>
+                    Delete
+                  </button>
+                  <button class="btn" style={{ flex: 1 }} onClick={() => setConfirmDelete(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button class="btn btn-danger" style={{ width: '100%' }} onClick={() => setConfirmDelete(true)}>
+                Delete Project
+              </button>
+            )}
+          </div>
+        </BottomSheet>
+      )}
+
       <div class="project-detail-body">
         <LogViewer
               messages={chatMessages}
@@ -553,10 +613,10 @@ export function ProjectDetail({ id }: Props) {
               loadingLabel={pendingPrompt ? 'Thinking...' : 'Running...'}
               projectId={id}
             />
-        <PromptInput projectId={id} onSubmit={handleRun} onCancel={handleCancel} disabled={isRunning} running={isRunning} />
       </div>
+      <PromptInput projectId={id} onSubmit={handleRun} onCancel={handleCancel} disabled={isRunning} running={isRunning} />
 
-      <aside class={`detail-sidebar context-${contextLevel}`}>
+      <aside class={`detail-sidebar context-${ctxLevel}`}>
         <div class="sidebar-item">
           <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />

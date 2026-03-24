@@ -1,13 +1,21 @@
 import { ContextUsage } from '../api/rest';
 
+/** Determine context warning level based on absolute token usage */
+export function contextLevel(used: number): 'normal' | 'warning' | 'danger' {
+  if (used >= 500000) return 'danger';
+  if (used >= 200000) return 'warning';
+  return 'normal';
+}
+
 interface Props {
   contextUsage?: ContextUsage | null;
   gitBranch?: string | null;
+  state?: string;
 }
 
-export function ContextBar({ contextUsage, gitBranch }: Props) {
+export function ContextBar({ contextUsage, gitBranch, state }: Props) {
   const pct = contextUsage ? Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100)) : 0;
-  const level = pct >= 80 ? 'danger' : pct >= 60 ? 'warning' : 'normal';
+  const level = contextUsage ? contextLevel(contextUsage.used) : 'normal';
 
   return (
     <div class={`context-bar context-${level}`}>

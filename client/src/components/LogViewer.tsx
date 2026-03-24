@@ -1,5 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState, useCallback } from 'preact/hooks';
+import { BottomSheet } from './BottomSheet';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { api } from '../api/rest';
@@ -160,27 +161,10 @@ function renderCodeResult(text: string, filePath?: string) {
 const TRUNCATE_HEIGHT = 250;
 
 function ContentModal({ title, children, onClose }: { title: string; children: ComponentChildren; onClose: () => void }) {
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
-  }, []);
-
   return (
-    <div class="content-modal-overlay" onClick={onClose}>
-      <div class="content-modal" onClick={(e) => e.stopPropagation()}>
-        <div class="content-modal-header">
-          <span class="content-modal-title">{title}</span>
-          <button class="content-modal-close" onClick={onClose}>
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div class="content-modal-body">
-          {children}
-        </div>
-      </div>
-    </div>
+    <BottomSheet title={title} onClose={onClose}>
+      {children}
+    </BottomSheet>
   );
 }
 
@@ -399,8 +383,12 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
     prevBlockCount.current = currentCount;
 
     if (el && shouldAutoScroll.current) {
-      el.scrollTop = el.scrollHeight;
-      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+      // Double rAF ensures layout is complete before scrolling
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.scrollTop = el.scrollHeight;
+        });
+      });
     } else if (el && !shouldAutoScroll.current && isNew) {
       setHasNewMessages(true);
     }
@@ -443,23 +431,96 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
     }, 150);
   };
 
-  const scrollToBottom = () => {
+  // FAB & new-messages: 'hidden' | 'visible' | 'exiting'
+  const [fabState, setFabState] = useState<'hidden' | 'visible' | 'exiting'>('hidden');
+  const [newMsgState, setNewMsgState] = useState<'hidden' | 'visible' | 'exiting'>('hidden');
+  const scrollingToBottom = useRef(false);
+
+  const scrollToBottom = useCallback(() => {
     const el = containerRef.current;
     if (el) {
-      el.scrollTop = el.scrollHeight;
+      scrollingToBottom.current = true;
+      // Trigger exit animations immediately on tap
+      setFabState(prev => prev !== 'hidden' ? 'exiting' : 'hidden');
+      setNewMsgState(prev => prev !== 'hidden' ? 'exiting' : 'hidden');
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       shouldAutoScroll.current = true;
       setHasNewMessages(false);
     }
-  };
+  }, []);
 
-  const latest = hasNewMessages ? getLatestPreview(messages) : null;
+  // Track FAB visibility
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const checkFab = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const atBottom = distFromBottom < 50;
+
+      if (scrollingToBottom.current && atBottom) {
+        scrollingToBottom.current = false;
+        return;
+      }
+
+      if (!scrollingToBottom.current) {
+        if (distFromBottom > 300) {
+          setFabState('visible');
+        } else if (distFromBottom < 50) {
+          setFabState(prev => prev === 'visible' ? 'exiting' : prev);
+        }
+      }
+    };
+    el.addEventListener('scroll', checkFab, { passive: true });
+    return () => el.removeEventListener('scroll', checkFab);
+  }, []);
+
+  // Sync new-messages state with hasNewMessages
+  useEffect(() => {
+    if (hasNewMessages) {
+      setNewMsgState('visible');
+    } else if (!hasNewMessages && newMsgState === 'visible') {
+      setNewMsgState('exiting');
+    }
+  }, [hasNewMessages]);
+
+  const handleAnimEnd = useCallback((setter: (s: 'hidden' | 'visible' | 'exiting') => void) => (e: AnimationEvent) => {
+    if (e.animationName === 'fabPopOut' || e.animationName === 'pillPopOut') {
+      setter('hidden');
+    }
+  }, []);
+
+  const latest = (hasNewMessages || newMsgState === 'exiting') ? getLatestPreview(messages) : null;
 
   return (
     <div class="log-viewer" ref={containerRef} onScroll={handleScroll}>
       {messages.length === 0 && <div class="log-empty">No messages yet.</div>}
       {messages.map((msg, i) => (
         <div key={i} class={`chat-msg chat-${msg.role}`}>
-          <div class="chat-role">{msg.role === 'user' ? 'You' : 'Claude'}</div>
+          <div class="chat-role">
+            {msg.role === 'user' ? (
+              <svg class="chat-role-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M20 21a8 8 0 1 0-16 0" />
+              </svg>
+            ) : (
+              <svg class="chat-role-icon" viewBox="0 0 20 14" width="20" height="14" shape-rendering="crispEdges">
+                {/* arms */}
+                <rect x="0" y="4" width="3" height="4" fill="#c07a50" />
+                <rect x="17" y="4" width="3" height="4" fill="#c07a50" />
+                {/* body */}
+                <rect x="3" y="0" width="14" height="11" fill="#c07a50" />
+                {/* eyes */}
+                <rect x="6" y="4" width="2" height="3" fill="#2c1810" />
+                <rect x="13" y="4" width="2" height="3" fill="#2c1810" />
+                {/* left 2 legs */}
+                <rect x="5" y="11" width="2" height="3" fill="#c07a50" />
+                <rect x="8" y="11" width="2" height="3" fill="#c07a50" />
+                {/* right 2 legs */}
+                <rect x="11" y="11" width="2" height="3" fill="#c07a50" />
+                <rect x="14" y="11" width="2" height="3" fill="#c07a50" />
+              </svg>
+            )}
+          </div>
           {msg.content.map((block, j) => renderBlock(block, j, projectId))}
           {msg.images && msg.images.length > 0 && (
             <div class="chat-images">
@@ -477,14 +538,46 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
       {loading && (
         <div class="loading-indicator">
           <span class="loading-dots">
-            <span /><span /><span />
+            <span /><span /><span /><span /><span />
           </span>
-          {loadingLabel || 'Thinking...'}
         </div>
       )}
-      {hasNewMessages && latest && (
-        <button class={`new-messages-btn new-msg-${latest.role}`} onClick={scrollToBottom}>
-          {latest.role === 'user' ? 'You' : 'Claude'}: {latest.text}
+      {newMsgState !== 'hidden' && latest && (
+        <button
+          class={`new-messages-btn ${newMsgState === 'exiting' ? 'pill-exit' : ''}`}
+          onClick={scrollToBottom}
+          onAnimationEnd={handleAnimEnd(setNewMsgState)}
+        >
+          {latest.role === 'user' ? (
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ flexShrink: 0 }}>
+              <circle cx="12" cy="8" r="4" />
+              <path d="M20 21a8 8 0 1 0-16 0" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 20 14" width="16" height="12" shape-rendering="crispEdges" style={{ flexShrink: 0 }}>
+              <rect x="0" y="4" width="3" height="4" fill="#c07a50" />
+              <rect x="17" y="4" width="3" height="4" fill="#c07a50" />
+              <rect x="3" y="0" width="14" height="11" fill="#c07a50" />
+              <rect x="6" y="4" width="2" height="3" fill="#2c1810" />
+              <rect x="13" y="4" width="2" height="3" fill="#2c1810" />
+              <rect x="5" y="11" width="2" height="3" fill="#c07a50" />
+              <rect x="8" y="11" width="2" height="3" fill="#c07a50" />
+              <rect x="11" y="11" width="2" height="3" fill="#c07a50" />
+              <rect x="14" y="11" width="2" height="3" fill="#c07a50" />
+            </svg>
+          )}
+          {latest.text}
+        </button>
+      )}
+      {fabState !== 'hidden' && newMsgState === 'hidden' && (
+        <button
+          class={`scroll-fab ${fabState === 'exiting' ? 'fab-exit' : ''}`}
+          onClick={scrollToBottom}
+          onAnimationEnd={handleAnimEnd(setFabState)}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
         </button>
       )}
     </div>

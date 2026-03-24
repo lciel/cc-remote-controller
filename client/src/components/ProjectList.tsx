@@ -4,6 +4,7 @@ import { ProjectCard } from './ProjectCard';
 import { api, setToken, DiscoveredProject } from '../api/rest';
 import { reconnectWs } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
+import { BottomSheet } from './BottomSheet';
 
 interface Props {
   path?: string;
@@ -65,15 +66,6 @@ export function ProjectList(_props: Props) {
     setInputMode('manual');
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await api.deleteProject(id);
-      refresh();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to delete');
-    }
-  };
-
   const handleSaveToken = () => {
     setToken(tokenInput);
     reconnectWs();
@@ -91,35 +83,67 @@ export function ProjectList(_props: Props) {
   return (
     <div class="page">
       <header class="header">
-        <h1>CC Remote</h1>
+        <h1>
+          <svg viewBox="0 0 20 14" width="20" height="14" shape-rendering="crispEdges" style={{ verticalAlign: '-1px', marginRight: '8px' }}>
+            <rect x="0" y="4" width="3" height="4" fill="#c07a50" />
+            <rect x="17" y="4" width="3" height="4" fill="#c07a50" />
+            <rect x="3" y="0" width="14" height="11" fill="#c07a50" />
+            <rect x="6" y="4" width="2" height="3" fill="#2c1810" />
+            <rect x="13" y="4" width="2" height="3" fill="#2c1810" />
+            <rect x="5" y="11" width="2" height="3" fill="#c07a50" />
+            <rect x="8" y="11" width="2" height="3" fill="#c07a50" />
+            <rect x="11" y="11" width="2" height="3" fill="#c07a50" />
+            <rect x="14" y="11" width="2" height="3" fill="#c07a50" />
+          </svg>
+          CC Remote Controller
+        </h1>
         <div class="header-actions">
-          <button class="btn-icon header-icon-btn" onClick={() => { setShowSettings(!showSettings); setShowCreate(false); }} aria-label="Settings">
-            {showSettings ? '\u2716' : '\u2699'}
+          <button class="btn-icon header-circle-btn" onClick={() => { setShowSettings(!showSettings); setShowCreate(false); }} aria-label="Settings">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
           </button>
         </div>
       </header>
 
       {showSettings && (
-        <div class="card">
-          <label class="label">Auth Token</label>
-          <input
-            type="password"
-            class="input"
-            value={tokenInput}
-            onInput={(e) => setTokenInput((e.target as HTMLInputElement).value)}
-          />
-          <button class="btn btn-primary" style={{ marginTop: '8px' }} onClick={handleSaveToken}>
-            Save
-          </button>
-        </div>
+        <BottomSheet title="Settings" onClose={() => setShowSettings(false)}>
+          <div style={{ padding: '0 16px' }}>
+            <label class="label">Auth Token</label>
+            <input
+              type="password"
+              class="input"
+              value={tokenInput}
+              onInput={(e) => setTokenInput((e.target as HTMLInputElement).value)}
+            />
+            <button class="btn btn-primary" style={{ width: '100%', marginTop: '12px' }} onClick={handleSaveToken}>
+              Save
+            </button>
+          </div>
+        </BottomSheet>
       )}
 
-      {loading && <div class="loading">Loading...</div>}
+      {loading && (
+        <div class="loading-splash">
+          <svg viewBox="0 0 20 14" width="120" height="84" shape-rendering="crispEdges">
+            <rect x="0" y="4" width="3" height="4" fill="#c07a50" />
+            <rect x="17" y="4" width="3" height="4" fill="#c07a50" />
+            <rect x="3" y="0" width="14" height="11" fill="#c07a50" />
+            <rect x="6" y="4" width="2" height="3" fill="#2c1810" />
+            <rect x="13" y="4" width="2" height="3" fill="#2c1810" />
+            <rect x="5" y="11" width="2" height="3" fill="#c07a50" />
+            <rect x="8" y="11" width="2" height="3" fill="#c07a50" />
+            <rect x="11" y="11" width="2" height="3" fill="#c07a50" />
+            <rect x="14" y="11" width="2" height="3" fill="#c07a50" />
+          </svg>
+        </div>
+      )}
       {error && <div class="error">{error}</div>}
 
       <div class="project-list">
         {projects.map((p) => (
-          <ProjectCard key={p.id} project={p} editing={showSettings} onDelete={handleDelete} />
+          <ProjectCard key={p.id} project={p} />
         ))}
         {!loading && projects.length === 0 && (
           <div class="empty">No projects yet. Add one to get started.</div>

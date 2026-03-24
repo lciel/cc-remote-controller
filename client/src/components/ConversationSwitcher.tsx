@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { api, ClaudeConversation } from '../api/rest';
+import { BottomSheet } from './BottomSheet';
 
 interface Props {
   projectId: string;
@@ -25,16 +26,8 @@ export function ConversationSwitcher({ projectId, currentSessionId, isOpen, onCl
   if (!isOpen) return null;
 
   return (
-    <div class="modal-overlay" onClick={onClose}>
-      <div class="modal-panel" onClick={(e) => e.stopPropagation()}>
-        <div class="modal-header">
-          <div class="label">Claude Code Sessions</div>
-          <button class="btn-icon modal-close" onClick={onClose}>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+    <BottomSheet title="Conversations" onClose={onClose}>
+      <div style={{ padding: '0 16px' }}>
         <button
           class="conv-item conv-new"
           onClick={() => onSelect('')}
@@ -42,9 +35,9 @@ export function ConversationSwitcher({ projectId, currentSessionId, isOpen, onCl
           + New Conversation
         </button>
         {loading ? (
-          <div class="loading">Searching sessions...</div>
+          <div class="loading">Searching conversations...</div>
         ) : conversations.length === 0 ? (
-          <div class="empty" style={{ padding: '12px' }}>No sessions found for this repo.</div>
+          <div class="empty" style={{ padding: '12px' }}>No conversations found for this repo.</div>
         ) : (
           <div class="conv-list">
             {conversations.map((conv) => (
@@ -61,6 +54,6 @@ export function ConversationSwitcher({ projectId, currentSessionId, isOpen, onCl
           </div>
         )}
       </div>
-    </div>
+    </BottomSheet>
   );
 }

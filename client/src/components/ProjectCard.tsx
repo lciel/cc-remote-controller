@@ -9,26 +9,13 @@ const stateColors: Record<string, string> = {
 
 interface Props {
   project: Project;
-  editing?: boolean;
-  onDelete?: (id: string) => void;
 }
 
-export function ProjectCard({ project, editing, onDelete }: Props) {
+export function ProjectCard({ project }: Props) {
   const updatedAt = new Date(project.updated_at).toLocaleString();
-
-  const handleDelete = (e: Event) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (confirm(`Delete "${project.name}"?`)) {
-      onDelete?.(project.id);
-    }
-  };
 
   return (
     <a href={`/projects/${project.id}`} class="project-card">
-      {editing && (
-        <button class="card-remove-btn" onClick={handleDelete}>x</button>
-      )}
       <div class="project-card-body">
         <div class="project-card-info">
           <span class="project-name">{project.name}</span>

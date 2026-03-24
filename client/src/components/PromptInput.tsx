@@ -146,15 +146,30 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
           ))}
         </div>
       )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
+      <textarea
+        ref={textareaRef}
+        class="input prompt-textarea"
+        value={value}
+        onInput={(e) => {
+          const v = (e.target as HTMLTextAreaElement).value;
+          setValue(v);
+          if (draftKey) localStorage.setItem(draftKey, v);
+          autoResize();
+        }}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        placeholder="Enter prompt..."
+        rows={1}
+      />
       <div class="prompt-input">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          style={{ display: 'none' }}
-          onChange={handleFileChange}
-        />
         <button
           class="btn-icon image-attach-btn"
           onClick={() => fileInputRef.current?.click()}
@@ -162,21 +177,6 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
         >
           +
         </button>
-        <textarea
-          ref={textareaRef}
-          class="input prompt-textarea"
-          value={value}
-          onInput={(e) => {
-            const v = (e.target as HTMLTextAreaElement).value;
-            setValue(v);
-            if (draftKey) localStorage.setItem(draftKey, v);
-            autoResize();
-          }}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="Enter prompt..."
-          rows={1}
-        />
         {running ? (
           <button
             class="btn-icon stop-btn"
