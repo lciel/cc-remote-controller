@@ -5,11 +5,22 @@ import { config } from '../config.js';
 import { isValidUUID } from '../utils/validation.js';
 
 /**
- * Validate that repoPath is an absolute path and exists.
+ * Characters that are dangerous in shell contexts.
+ * Even with shellEscape(), passing user input through `bash -lc` is risky.
+ * Reject paths containing shell metacharacters as an extra safety layer.
+ */
+const SHELL_META_RE = /[;&|`$(){}!<>\\"\n\r\x00]/;
+
+/**
+ * Validate that repoPath is an absolute path, exists, and contains no
+ * shell metacharacters (defense-in-depth against injection).
  */
 function validateRepoPath(repoPath: string): void {
   if (!path.isAbsolute(repoPath)) {
     throw new Error(`repoPath must be absolute: ${repoPath}`);
+  }
+  if (SHELL_META_RE.test(repoPath)) {
+    throw new Error('repoPath contains disallowed characters');
   }
   if (!fs.existsSync(repoPath)) {
     throw new Error(`repoPath does not exist: ${repoPath}`);

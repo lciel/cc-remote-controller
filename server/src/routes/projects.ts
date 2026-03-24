@@ -7,7 +7,7 @@ import { listConversations, readConversation, getContextUsage, getToolResult, di
 
 const router = Router();
 
-import { isValidUUID } from '../utils/validation.js';
+import { isValidUUID, isAllowedRepoPath } from '../utils/validation.js';
 
 const MAX_NAME_LENGTH = 255;
 const MAX_PROMPT_BYTES = 1 * 1024 * 1024; // 1 MB
@@ -25,6 +25,10 @@ router.post('/', (req: Request, res: Response) => {
   }
   if (!path.isAbsolute(repoPath)) {
     res.status(400).json({ error: 'repoPath must be an absolute path' });
+    return;
+  }
+  if (!isAllowedRepoPath(repoPath)) {
+    res.status(403).json({ error: 'repoPath is outside allowed directories' });
     return;
   }
   if (!fs.existsSync(repoPath)) {

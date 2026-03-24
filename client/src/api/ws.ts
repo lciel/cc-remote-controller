@@ -15,9 +15,11 @@ export class WsClient {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${location.host}/ws?token=${encodeURIComponent(this.token)}`;
+    const url = `${protocol}//${location.host}/ws`;
 
-    this.ws = new WebSocket(url);
+    // Send token via Sec-WebSocket-Protocol header instead of URL query
+    // to avoid token exposure in browser history, server logs, and proxies.
+    this.ws = new WebSocket(url, ['v1', `auth.${this.token}`]);
 
     this.ws.onopen = () => {
       // Re-subscribe after reconnect

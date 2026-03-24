@@ -6,7 +6,7 @@ import './styles/global.css';
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get('token');
 if (urlToken) {
-  localStorage.setItem('cc-auth-token', urlToken);
+  sessionStorage.setItem('cc-auth-token', urlToken);
   urlParams.delete('token');
   const cleanSearch = urlParams.toString();
   const cleanUrl = window.location.pathname + (cleanSearch ? `?${cleanSearch}` : '');

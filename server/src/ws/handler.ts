@@ -9,9 +9,12 @@ const subscriptions = new Map<string, Set<WebSocket>>();
 
 export function setupWebSocket(wss: WebSocketServer): void {
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-    // Authenticate via query param
-    const url = new URL(req.url || '', `http://${req.headers.host}`);
-    const token = url.searchParams.get('token');
+    // Authenticate via Sec-WebSocket-Protocol subprotocol header.
+    // Client sends: new WebSocket(url, ['v1', 'auth.<token>'])
+    // This avoids exposing the token in URL query strings (logged by proxies/browsers).
+    const protocols = (req.headers['sec-websocket-protocol'] || '').split(',').map(s => s.trim());
+    const authProto = protocols.find(p => p.startsWith('auth.'));
+    const token = authProto ? authProto.slice(5) : null;
 
     if (!token || !safeCompare(token, config.authToken)) {
       ws.close(4001, 'Unauthorized');

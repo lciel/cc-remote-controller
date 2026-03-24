@@ -19,7 +19,7 @@ export function ProjectList(_props: Props) {
   const [creating, setCreating] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [tokenInput, setTokenInput] = useState(
-    localStorage.getItem('cc-auth-token') || ''
+    sessionStorage.getItem('cc-auth-token') || ''
   );
 
   // Discovery state
