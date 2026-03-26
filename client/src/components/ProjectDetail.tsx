@@ -76,6 +76,7 @@ function parseContextLimit(model: string | null): number {
     const unit = match[2].toLowerCase();
     return unit === 'm' ? num * 1000000 : num * 1000;
   }
+  if (/claude-opus-4-6/.test(model)) return 1000000;
   return 200000;
 }
 
@@ -301,6 +302,7 @@ export function ProjectDetail({ id }: Props) {
 
   const [showLinkPanel, setShowLinkPanel] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
@@ -362,6 +364,7 @@ export function ProjectDetail({ id }: Props) {
       setProject((prev) => (prev ? { ...prev, state: m.state as string } : prev));
     } else if (m.type === 'job_started') {
       currentJobPromptRef.current = m.prompt as string || null;
+      setJobActive(true);
       // Clear pendingPrompt for unlinked mode (stream events will show the prompt via job_prompt).
       // For linked mode, pendingPrompt stays until job_finished when JSONL is reloaded.
       setProject((prev) => {
@@ -540,7 +543,7 @@ export function ProjectDetail({ id }: Props) {
   const isRunning = project.state === 'RUNNING' || project.state === 'STOPPING';
 
   const contextPct = contextUsage ? Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100)) : 0;
-  const ctxLevel = contextUsage ? getContextLevel(contextUsage.used) : 'normal';
+  const ctxLevel = contextUsage ? getContextLevel(contextUsage.used, contextUsage.limit) : 'normal';
 
   return (
     <div class="page project-detail">
@@ -583,25 +586,82 @@ export function ProjectDetail({ id }: Props) {
       {showProjectMenu && (
         <BottomSheet title={project.name} onClose={() => setShowProjectMenu(false)}>
           <div style={{ padding: '0 16px' }}>
-            {confirmDelete ? (
-              <div>
-                <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  Are you sure you want to delete this project?
-                </p>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button class="btn btn-danger" style={{ flex: 1 }} onClick={handleDeleteProject}>
-                    Delete
-                  </button>
-                  <button class="btn" style={{ flex: 1 }} onClick={() => setConfirmDelete(false)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button class="btn btn-danger" style={{ width: '100%' }} onClick={() => setConfirmDelete(true)}>
-                Delete Project
+            <div class="model-dropdown">
+              <button
+                class={`model-dropdown-trigger${showModelDropdown ? ' open' : ''}`}
+                onClick={() => setShowModelDropdown(v => !v)}
+              >
+                <span class="model-dropdown-icon">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                    <rect x="8" y="8" width="8" height="8" rx="1" />
+                    <line x1="12" y1="2" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="22" />
+                    <line x1="2" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="22" y2="12" />
+                  </svg>
+                </span>
+                <span class="model-dropdown-current">
+                  {project.model ? project.model.charAt(0).toUpperCase() + project.model.slice(1) : 'Default'}
+                </span>
+                <svg class="model-dropdown-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
               </button>
-            )}
+              {showModelDropdown && (
+                <div class="model-dropdown-menu">
+                  {([
+                    { value: null, label: 'Default', desc: 'Claude が自動選択' },
+                    { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', desc: 'バランス重視・1Mコンテキスト' },
+                    { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6', desc: '高精度・高負荷タスク向け・1Mコンテキスト' },
+                  ] as { value: string | null; label: string; desc: string }[]).map(opt => {
+                    const isActive = (project.model ?? null) === opt.value;
+                    return (
+                      <button
+                        key={opt.label}
+                        class={`model-dropdown-item${isActive ? ' active' : ''}`}
+                        onClick={async () => {
+                          try {
+                            const updated = await api.updateProject(project.id, { model: opt.value });
+                            setProject(updated);
+                          } catch { /* ignore */ }
+                          setShowModelDropdown(false);
+                        }}
+                      >
+                        <span class="model-dropdown-item-text">
+                          <span class="model-dropdown-item-label">{opt.label}</span>
+                          <span class="model-dropdown-item-desc">{opt.desc}</span>
+                        </span>
+                        {isActive && (
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div style={{ marginTop: '16px' }}>
+              {confirmDelete ? (
+                <div>
+                  <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                    Are you sure you want to delete this project?
+                  </p>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button class="btn btn-danger" style={{ flex: 1 }} onClick={handleDeleteProject}>
+                      Delete
+                    </button>
+                    <button class="btn" style={{ flex: 1 }} onClick={() => setConfirmDelete(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button class="btn btn-danger" style={{ width: '100%' }} onClick={() => setConfirmDelete(true)}>
+                  Delete Project
+                </button>
+              )}
+            </div>
           </div>
         </BottomSheet>
       )}
@@ -626,7 +686,7 @@ export function ProjectDetail({ id }: Props) {
             {project.state}
           </span>
         </div>
-        {contextUsage?.model && (
+        {(project.model || contextUsage?.model) && (
           <div class="sidebar-item">
             <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect x="4" y="4" width="16" height="16" rx="2" />
@@ -644,7 +704,11 @@ export function ProjectDetail({ id }: Props) {
               <line x1="20" y1="7" x2="22" y2="7" />
               <line x1="20" y1="17" x2="22" y2="17" />
             </svg>
-            <span class="sidebar-label">{contextUsage.model.replace('claude-', '')}</span>
+            <span class="sidebar-label">
+              {project.model
+                ? project.model.charAt(0).toUpperCase() + project.model.slice(1)
+                : (contextUsage?.model || '').replace('claude-', '')}
+            </span>
           </div>
         )}
         {contextUsage && (
@@ -655,7 +719,7 @@ export function ProjectDetail({ id }: Props) {
             </svg>
             <div class="sidebar-context">
               <span class="sidebar-label context-meter">
-                {Math.round(contextUsage.used / 1000)}k/{Math.round(contextUsage.limit / 1000)}k ({contextPct}%)
+                {Math.round(contextUsage.used / 1000)}k ({contextPct}%)
               </span>
               <div class="sidebar-meter">
                 <div class="sidebar-meter-fill" style={{ width: `${contextPct}%` }} />

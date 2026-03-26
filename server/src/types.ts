@@ -10,6 +10,7 @@ export interface Project {
   updated_at: string;
   last_job_id: string | null;
   claude_session_id: string | null;
+  model: string | null;
 }
 
 export interface Job {
@@ -39,4 +40,5 @@ export type WsServerMessage =
   | { type: 'project_state'; projectId: string; state: ProjectState }
   | { type: 'job_started'; projectId: string; jobId: string; prompt: string }
   | { type: 'job_finished'; projectId: string; jobId: string; state: JobState }
-  | { type: 'event'; projectId: string; jobId: string; data: unknown };
+  | { type: 'event'; projectId: string; jobId: string; data: unknown }
+  | { type: 'settings_update'; wolUrl: string; sleepCmd: string };

@@ -6,6 +6,8 @@ import { WsClientMessage, WsServerMessage } from '../types.js';
 
 // projectId → Set of subscribed WebSocket clients
 const subscriptions = new Map<string, Set<WebSocket>>();
+// All authenticated clients
+const allClients = new Set<WebSocket>();
 
 export function setupWebSocket(wss: WebSocketServer): void {
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
@@ -21,6 +23,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
       return;
     }
 
+    allClients.add(ws);
     const clientSubscriptions = new Set<string>();
 
     ws.on('message', (data) => {
@@ -43,6 +46,7 @@ export function setupWebSocket(wss: WebSocketServer): void {
     });
 
     ws.on('close', () => {
+      allClients.delete(ws);
       for (const projectId of clientSubscriptions) {
         subscriptions.get(projectId)?.delete(ws);
         if (subscriptions.get(projectId)?.size === 0) {
@@ -51,6 +55,18 @@ export function setupWebSocket(wss: WebSocketServer): void {
       }
     });
   });
+}
+
+/**
+ * Broadcast a message to all authenticated clients.
+ */
+export function broadcastAll(message: WsServerMessage): void {
+  const payload = JSON.stringify(message);
+  for (const ws of allClients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    }
+  }
 }
 
 /**

@@ -33,6 +33,7 @@ export interface Project {
   updated_at: string;
   last_job_id: string | null;
   claude_session_id: string | null;
+  model: string | null;
 }
 
 export interface Job {
@@ -87,7 +88,7 @@ export const api = {
   getProjectEvents: (projectId: string) =>
     request<unknown[]>(`/api/projects/${projectId}/events`),
 
-  updateProject: (projectId: string, data: { claudeSessionId?: string | null }) =>
+  updateProject: (projectId: string, data: { claudeSessionId?: string | null; model?: string | null }) =>
     request<Project>(`/api/projects/${projectId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -111,6 +112,21 @@ export const api = {
   deleteProject: (projectId: string) =>
     request<{ message: string }>(`/api/projects/${projectId}`, {
       method: 'DELETE',
+    }),
+
+  sleepSystem: (command: string) =>
+    request<{ message: string }>('/api/system/sleep', {
+      method: 'POST',
+      body: JSON.stringify({ command }),
+    }),
+
+  getSettings: () =>
+    request<{ wolUrl: string; sleepCmd: string }>('/api/system/settings'),
+
+  updateSettings: (data: { wolUrl?: string; sleepCmd?: string }) =>
+    request<{ wolUrl: string; sleepCmd: string }>('/api/system/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
     }),
 };
 

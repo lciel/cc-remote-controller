@@ -1,5 +1,5 @@
 {
-  "name": "cc-remote-controller-client",
+  "name": "ccctl-client",
   "version": "1.0.0",
   "private": true,
   "type": "module",

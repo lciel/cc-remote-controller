@@ -25,15 +25,15 @@ export function ConversationSwitcher({ projectId, currentSessionId, isOpen, onCl
 
   if (!isOpen) return null;
 
+  const footer = (
+    <button class="conv-new" onClick={() => onSelect('')}>
+      + New Conversation
+    </button>
+  );
+
   return (
-    <BottomSheet title="Conversations" onClose={onClose}>
+    <BottomSheet title="Conversations" onClose={onClose} footer={footer}>
       <div style={{ padding: '0 16px' }}>
-        <button
-          class="conv-item conv-new"
-          onClick={() => onSelect('')}
-        >
-          + New Conversation
-        </button>
         {loading ? (
           <div class="loading">Searching conversations...</div>
         ) : conversations.length === 0 ? (

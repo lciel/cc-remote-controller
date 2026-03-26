@@ -1,5 +1,5 @@
 import { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState, useCallback } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'preact/hooks';
 import { BottomSheet } from './BottomSheet';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -224,7 +224,11 @@ interface TodoItem {
 }
 
 function renderTodoWrite(input: Record<string, unknown>) {
-  const todos = (input.todos || []) as TodoItem[];
+  let raw = input.todos || [];
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch { raw = []; }
+  }
+  const todos = (Array.isArray(raw) ? raw : []) as TodoItem[];
   return (
     <div class="todo-detail">
       {todos.map((todo, i) => (
@@ -376,19 +380,14 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
   const prevBlockCount = useRef(0);
   const [hasNewMessages, setHasNewMessages] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     const currentCount = countBlocks(messages);
     const isNew = currentCount > prevBlockCount.current;
     prevBlockCount.current = currentCount;
 
     if (el && shouldAutoScroll.current) {
-      // Double rAF ensures layout is complete before scrolling
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          el.scrollTop = el.scrollHeight;
-        });
-      });
+      el.scrollTop = el.scrollHeight;
     } else if (el && !shouldAutoScroll.current && isNew) {
       setHasNewMessages(true);
     }
@@ -440,12 +439,21 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
     const el = containerRef.current;
     if (el) {
       scrollingToBottom.current = true;
-      // Trigger exit animations immediately on tap
       setFabState(prev => prev !== 'hidden' ? 'exiting' : 'hidden');
       setNewMsgState(prev => prev !== 'hidden' ? 'exiting' : 'hidden');
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       shouldAutoScroll.current = true;
       setHasNewMessages(false);
+      const start = el.scrollTop;
+      const end = el.scrollHeight - el.clientHeight;
+      const duration = 300;
+      const startTime = performance.now();
+      const tick = (now: number) => {
+        const t = Math.min((now - startTime) / duration, 1);
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        el.scrollTop = start + (end - start) * ease;
+        if (t < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
     }
   }, []);
 
@@ -538,7 +546,7 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
       {loading && (
         <div class="loading-indicator">
           <span class="loading-dots">
-            <span /><span /><span /><span /><span />
+            <span /><span /><span /><span /><span /><span /><span /><span /><span /><span />
           </span>
         </div>
       )}

@@ -42,6 +42,16 @@ export function useWebSocket(
   }, [projectId]);
 }
 
+export function useGlobalWsMessage(onMessage: (data: unknown) => void): void {
+  const handlerRef = useRef(onMessage);
+  handlerRef.current = onMessage;
+
+  useEffect(() => {
+    const client = getWsClient();
+    return client.onMessage((data) => handlerRef.current(data));
+  }, []);
+}
+
 export function reconnectWs(): void {
   if (sharedClient) {
     sharedClient.disconnect();

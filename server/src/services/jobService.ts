@@ -118,7 +118,7 @@ export function getAllEventsByProject(projectId: string): unknown[] {
   `).all(projectId, projectId);
 }
 
-export function startJob(projectId: string, repoPath: string, prompt: string, images?: ImageAttachment[]): string {
+export function startJob(projectId: string, repoPath: string, prompt: string, images?: ImageAttachment[], model?: string | null): string {
   const project = projectService.getProject(projectId);
   const job = createJob(projectId, prompt);
   const jobId = job.id;
@@ -146,6 +146,7 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
       repoPath,
       prompt: finalPrompt,
       claudeSessionId: project?.claude_session_id,
+      model,
     });
     runningJobs.set(jobId, child);
 

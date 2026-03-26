@@ -100,7 +100,7 @@ router.post('/:id/run', (req: Request, res: Response) => {
     return;
   }
 
-  const jobId = jobService.startJob(project.id, project.repo_path, prompt, images);
+  const jobId = jobService.startJob(project.id, project.repo_path, prompt, images, project.model);
   res.status(201).json({ jobId });
 });
 
@@ -134,13 +134,21 @@ router.patch('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const { claudeSessionId } = req.body;
+  const { claudeSessionId, model } = req.body;
   if (claudeSessionId !== undefined) {
     if (claudeSessionId !== null && (typeof claudeSessionId !== 'string' || !isValidUUID(claudeSessionId))) {
       res.status(400).json({ error: 'claudeSessionId must be a valid UUID or null' });
       return;
     }
     projectService.updateClaudeSessionId(project.id, claudeSessionId);
+  }
+  if (model !== undefined) {
+    const ALLOWED_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-6[1m]'];
+    if (model !== null && !ALLOWED_MODELS.includes(model)) {
+      res.status(400).json({ error: `model must be one of: ${ALLOWED_MODELS.join(', ')}` });
+      return;
+    }
+    projectService.updateModel(project.id, model);
   }
 
   res.json(projectService.getProject(project.id));

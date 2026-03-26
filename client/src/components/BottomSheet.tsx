@@ -5,14 +5,15 @@ import { useEffect, useRef, useCallback } from 'preact/hooks';
 interface Props {
   title: string;
   children: ComponentChildren;
+  footer?: ComponentChildren;
   onClose: () => void;
 }
 
-export function BottomSheet({ title, children, onClose }: Props) {
+export function BottomSheet({ title, children, footer, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{ startY: number; currentY: number; dragging: boolean }>({ startY: 0, currentY: 0, dragging: false });
+  const dragState = useRef<{ startY: number; currentY: number; dragging: boolean; fromHeader: boolean }>({ startY: 0, currentY: 0, dragging: false, fromHeader: false });
   const closedByBack = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -46,9 +47,9 @@ export function BottomSheet({ title, children, onClose }: Props) {
     };
   }, [animateClose]);
 
-  const handleTouchStart = useCallback((e: TouchEvent) => {
+  const handleTouchStart = useCallback((e: TouchEvent, fromHeader = false) => {
     // Always record start position; decide whether to drag in touchmove
-    dragState.current = { startY: e.touches[0].clientY, currentY: e.touches[0].clientY, dragging: false };
+    dragState.current = { startY: e.touches[0].clientY, currentY: e.touches[0].clientY, dragging: false, fromHeader };
   }, []);
 
   const handleTouchMove = useCallback((e: TouchEvent) => {
@@ -56,12 +57,12 @@ export function BottomSheet({ title, children, onClose }: Props) {
     ds.currentY = e.touches[0].clientY;
     const dy = ds.currentY - ds.startY;
 
-    // Start dragging only if pulling down AND content is at top
+    // Start dragging only if pulling down; header/handle area bypasses scroll check
     if (!ds.dragging) {
       if (dy > 0) {
         const body = bodyRef.current;
         const atTop = !body || body.scrollTop <= 0;
-        if (atTop) {
+        if (atTop || ds.fromHeader) {
           ds.dragging = true;
         }
       }
@@ -97,13 +98,14 @@ export function BottomSheet({ title, children, onClose }: Props) {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <div class="sheet-handle" />
-        <div class="sheet-header">
+        <div class="sheet-handle" onTouchStart={(e) => { e.stopPropagation(); handleTouchStart(e as unknown as TouchEvent, true); }} />
+        <div class="sheet-header" onTouchStart={(e) => { e.stopPropagation(); handleTouchStart(e as unknown as TouchEvent, true); }}>
           <div class="label">{title}</div>
         </div>
         <div ref={bodyRef} class="sheet-body">
           {children}
         </div>
+        {footer && <div class="sheet-footer">{footer}</div>}
       </div>
     </div>,
     document.body

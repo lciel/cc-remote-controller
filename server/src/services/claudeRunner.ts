@@ -39,6 +39,7 @@ export interface ClaudeRunOptions {
   repoPath: string;
   prompt: string;
   claudeSessionId?: string | null;
+  model?: string | null;
 }
 
 /**
@@ -46,12 +47,20 @@ export interface ClaudeRunOptions {
  * If claudeSessionId is provided, uses --resume to continue the conversation.
  */
 export function runClaude(options: ClaudeRunOptions): ChildProcess {
-  const { repoPath, prompt, claudeSessionId } = options;
+  const { repoPath, prompt, claudeSessionId, model } = options;
   validateRepoPath(repoPath);
 
   const escapedPrompt = shellEscape(prompt);
   const claudeBin = shellEscape(config.claudePath);
   let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
+
+  if (model) {
+    // Validate model value is alphanumeric with hyphens/dots/brackets only (no injection)
+    if (!/^[a-zA-Z0-9._\[\]-]+$/.test(model)) {
+      throw new Error('Invalid model name');
+    }
+    cmd += ` --model '${shellEscape(model)}'`;
+  }
 
   if (claudeSessionId) {
     if (!isValidUUID(claudeSessionId)) {

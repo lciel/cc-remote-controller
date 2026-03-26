@@ -2,15 +2,19 @@ import { useState, useEffect } from 'preact/hooks';
 import { useProjects } from '../hooks/useProjects';
 import { ProjectCard } from './ProjectCard';
 import { api, setToken, DiscoveredProject } from '../api/rest';
-import { reconnectWs } from '../hooks/useWebSocket';
+import { reconnectWs, useGlobalWsMessage } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { BottomSheet } from './BottomSheet';
+import { WOL_URL_KEY } from './OfflineScreen';
+
+export const SLEEP_CMD_KEY = 'cc-sleep-cmd';
 
 interface Props {
   path?: string;
+  onPreviewOffline?: () => void;
 }
 
-export function ProjectList(_props: Props) {
+export function ProjectList({ onPreviewOffline }: Props) {
   const { projects, loading, error, refresh } = useProjects();
   usePageVisibility(refresh);
   const [showCreate, setShowCreate] = useState(false);
@@ -21,6 +25,31 @@ export function ProjectList(_props: Props) {
   const [tokenInput, setTokenInput] = useState(
     sessionStorage.getItem('cc-auth-token') || ''
   );
+  const [wolUrlInput, setWolUrlInput] = useState(
+    localStorage.getItem(WOL_URL_KEY) || ''
+  );
+  const [sleepCmdInput, setSleepCmdInput] = useState(
+    localStorage.getItem(SLEEP_CMD_KEY) || ''
+  );
+  const [showSleepConfirm, setShowSleepConfirm] = useState(false);
+  const [sleeping, setSleeping] = useState(false);
+
+  // Fetch settings from server on mount
+  useEffect(() => {
+    api.getSettings().then(s => {
+      if (s.wolUrl) { localStorage.setItem(WOL_URL_KEY, s.wolUrl); setWolUrlInput(s.wolUrl); }
+      if (s.sleepCmd) { localStorage.setItem(SLEEP_CMD_KEY, s.sleepCmd); setSleepCmdInput(s.sleepCmd); }
+    }).catch(() => { /* use localStorage fallback */ });
+  }, []);
+
+  // Receive settings updates from other clients
+  useGlobalWsMessage((data: unknown) => {
+    const msg = data as { type?: string; wolUrl?: string; sleepCmd?: string };
+    if (msg.type === 'settings_update') {
+      if (msg.wolUrl !== undefined) { localStorage.setItem(WOL_URL_KEY, msg.wolUrl); setWolUrlInput(msg.wolUrl); }
+      if (msg.sleepCmd !== undefined) { localStorage.setItem(SLEEP_CMD_KEY, msg.sleepCmd); setSleepCmdInput(msg.sleepCmd); }
+    }
+  });
 
   // Discovery state
   const [discovered, setDiscovered] = useState<DiscoveredProject[]>([]);
@@ -68,9 +97,23 @@ export function ProjectList(_props: Props) {
 
   const handleSaveToken = () => {
     setToken(tokenInput);
+    localStorage.setItem(WOL_URL_KEY, wolUrlInput.trim());
+    localStorage.setItem(SLEEP_CMD_KEY, sleepCmdInput.trim());
+    api.updateSettings({ wolUrl: wolUrlInput.trim(), sleepCmd: sleepCmdInput.trim() }).catch(() => { /* ignore */ });
     reconnectWs();
     setShowSettings(false);
     refresh();
+  };
+
+  const handleSleep = async () => {
+    const cmd = localStorage.getItem(SLEEP_CMD_KEY) || '';
+    if (!cmd) return;
+    setSleeping(true);
+    try {
+      await api.sleepSystem(cmd);
+    } catch { /* server may go down before responding */ }
+    setSleeping(false);
+    setShowSleepConfirm(false);
   };
 
   const handleCloseCreate = () => {
@@ -84,7 +127,7 @@ export function ProjectList(_props: Props) {
     <div class="page">
       <header class="header">
         <h1>
-          <svg viewBox="0 0 20 14" width="20" height="14" shape-rendering="crispEdges" style={{ verticalAlign: '-1px', marginRight: '8px' }}>
+          <svg viewBox="0 0 20 14" width="26" height="18" shape-rendering="crispEdges" style={{ verticalAlign: '-2px', marginRight: '9px' }}>
             <rect x="0" y="4" width="3" height="4" fill="#c07a50" />
             <rect x="17" y="4" width="3" height="4" fill="#c07a50" />
             <rect x="3" y="0" width="14" height="11" fill="#c07a50" />
@@ -95,9 +138,17 @@ export function ProjectList(_props: Props) {
             <rect x="11" y="11" width="2" height="3" fill="#c07a50" />
             <rect x="14" y="11" width="2" height="3" fill="#c07a50" />
           </svg>
-          CC Remote Controller
+          ccctl
         </h1>
         <div class="header-actions">
+          {localStorage.getItem(SLEEP_CMD_KEY) && (
+            <button class="btn-icon header-circle-btn sleep-btn" onClick={() => setShowSleepConfirm(true)} aria-label="Sleep PC">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" />
+                <line x1="12" y1="2" x2="12" y2="12" />
+              </svg>
+            </button>
+          )}
           <button class="btn-icon header-circle-btn" onClick={() => { setShowSettings(!showSettings); setShowCreate(false); }} aria-label="Settings">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3" />
@@ -106,6 +157,29 @@ export function ProjectList(_props: Props) {
           </button>
         </div>
       </header>
+
+      {showSleepConfirm && (
+        <BottomSheet title="Sleep PC" onClose={() => setShowSleepConfirm(false)}>
+          <div style={{ padding: '0 16px' }}>
+            <p style={{ margin: '0 0 16px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              Run the sleep command on the server?
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                class="btn btn-danger"
+                style={{ flex: 1 }}
+                disabled={sleeping}
+                onClick={handleSleep}
+              >
+                {sleeping ? 'Running...' : 'Run'}
+              </button>
+              <button class="btn" style={{ flex: 1 }} onClick={() => setShowSleepConfirm(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </BottomSheet>
+      )}
 
       {showSettings && (
         <BottomSheet title="Settings" onClose={() => setShowSettings(false)}>
@@ -117,9 +191,32 @@ export function ProjectList(_props: Props) {
               value={tokenInput}
               onInput={(e) => setTokenInput((e.target as HTMLInputElement).value)}
             />
+            <label class="label" style={{ marginTop: '16px' }}>Wake-on-LAN URL</label>
+            <input
+              type="url"
+              class="input"
+              value={wolUrlInput}
+              placeholder="http://192.168.0.x:9009/wake"
+              onInput={(e) => setWolUrlInput((e.target as HTMLInputElement).value)}
+            />
+            <p class="settings-hint">POST endpoint called when the server is unreachable.</p>
+            <label class="label" style={{ marginTop: '16px' }}>Sleep Command</label>
+            <input
+              type="text"
+              class="input"
+              value={sleepCmdInput}
+              placeholder="powershell.exe -c Start-Sleep..."
+              onInput={(e) => setSleepCmdInput((e.target as HTMLInputElement).value)}
+            />
+            <p class="settings-hint">Shell command executed on the server. Power icon appears in header when set.</p>
             <button class="btn btn-primary" style={{ width: '100%', marginTop: '12px' }} onClick={handleSaveToken}>
               Save
             </button>
+            {onPreviewOffline && (
+              <button class="btn" style={{ width: '100%', marginTop: '8px' }} onClick={() => { setShowSettings(false); onPreviewOffline(); }}>
+                Preview Offline Screen
+              </button>
+            )}
           </div>
         </BottomSheet>
       )}

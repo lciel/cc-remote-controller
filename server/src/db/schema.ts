@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_job_id TEXT,
-  claude_session_id TEXT
+  claude_session_id TEXT,
+  model TEXT
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -30,4 +31,9 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_project_id ON jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_events_job_id ON events(job_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
 `;

@@ -22,6 +22,7 @@ function parseContextLimit(model: string): number {
     const unit = match[2].toLowerCase();
     return unit === 'm' ? num * 1000000 : num * 1000;
   }
+  if (/claude-opus-4-6/.test(model)) return 1000000;
   return 200000;
 }
 

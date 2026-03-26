@@ -1,6 +1,6 @@
 {
-  "name": "CC Remote Controller",
-  "short_name": "CC Remote",
+  "name": "ccctl",
+  "short_name": "ccctl",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1a1a2e",

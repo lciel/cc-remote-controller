@@ -1,5 +1,5 @@
 {
-  "name": "cc-remote-controller",
+  "name": "ccctl",
   "version": "1.0.0",
   "private": true,
   "workspaces": [

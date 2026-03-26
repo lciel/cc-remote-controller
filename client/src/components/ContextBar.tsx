@@ -1,9 +1,17 @@
 import { ContextUsage } from '../api/rest';
 
-/** Determine context warning level based on absolute token usage */
-export function contextLevel(used: number): 'normal' | 'warning' | 'danger' {
-  if (used >= 500000) return 'danger';
-  if (used >= 200000) return 'warning';
+/** Determine context warning level based on token usage ratio */
+export function contextLevel(used: number, limit: number): 'normal' | 'warning' | 'danger' {
+  const pct = used / limit;
+  if (limit >= 500000) {
+    // 1M context: warn at 20% (200k), danger at 50% (500k)
+    if (pct >= 0.5) return 'danger';
+    if (pct >= 0.2) return 'warning';
+  } else {
+    // 200k context: warn at 55%, danger at 75%
+    if (pct >= 0.75) return 'danger';
+    if (pct >= 0.55) return 'warning';
+  }
   return 'normal';
 }
 
@@ -15,7 +23,7 @@ interface Props {
 
 export function ContextBar({ contextUsage, gitBranch, state }: Props) {
   const pct = contextUsage ? Math.min(100, Math.round(contextUsage.used / contextUsage.limit * 100)) : 0;
-  const level = contextUsage ? contextLevel(contextUsage.used) : 'normal';
+  const level = contextUsage ? contextLevel(contextUsage.used, contextUsage.limit) : 'normal';
 
   return (
     <div class={`context-bar context-${level}`}>
@@ -32,7 +40,7 @@ export function ContextBar({ contextUsage, gitBranch, state }: Props) {
           <span class="context-bar-bg">
             <span class="context-bar-fill" style={{ width: `${pct}%` }} />
           </span>
-          {Math.round(contextUsage.used / 1000)}k/{Math.round(contextUsage.limit / 1000)}k ({pct}%)
+          {Math.round(contextUsage.used / 1000)}k ({pct}%)
         </span>
       )}
       {gitBranch && (

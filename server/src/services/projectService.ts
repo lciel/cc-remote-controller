@@ -46,6 +46,13 @@ export function updateClaudeSessionId(id: string, claudeSessionId: string | null
   ).run(claudeSessionId, new Date().toISOString(), id);
 }
 
+export function updateModel(id: string, model: string | null): void {
+  const db = getDb();
+  db.prepare(
+    `UPDATE projects SET model = ?, updated_at = ? WHERE id = ?`
+  ).run(model, new Date().toISOString(), id);
+}
+
 export function deleteProject(id: string): boolean {
   const db = getDb();
   db.prepare('DELETE FROM events WHERE job_id IN (SELECT id FROM jobs WHERE project_id = ?)').run(id);

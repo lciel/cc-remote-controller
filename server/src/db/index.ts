@@ -23,6 +23,13 @@ export function initDb(): void {
   const database = getDb();
   database.exec(CREATE_TABLES);
 
+  // Migrations: add columns if missing
+  const cols = database.prepare("PRAGMA table_info(projects)").all() as { name: string }[];
+  const colNames = new Set(cols.map(c => c.name));
+  if (!colNames.has('model')) {
+    database.exec("ALTER TABLE projects ADD COLUMN model TEXT");
+  }
+
   // Reset stale states from unclean shutdown
   database.prepare("UPDATE projects SET state = 'IDLE' WHERE state IN ('RUNNING', 'STOPPING')").run();
   database.prepare("UPDATE jobs SET state = 'FAILED', ended_at = datetime('now') WHERE state IN ('QUEUED', 'RUNNING')").run();
