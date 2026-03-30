@@ -924,6 +924,114 @@ a {
   color: var(--text-secondary);
 }
 
+/* ToolSearch */
+.toolsearch-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  background: rgba(0, 0, 0, 0.02);
+}
+.toolsearch-query {
+  color: var(--text-primary);
+  font-style: italic;
+}
+.toolsearch-max {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+/* WebFetch */
+.webfetch-detail {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+.webfetch-url {
+  display: block;
+  word-break: break-all;
+  color: var(--color-accent);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.75rem;
+}
+.webfetch-prompt {
+  margin: 6px 0 0;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+
+/* WebSearch */
+.websearch-detail {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+.websearch-query {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.websearch-domains {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+/* SendMessage */
+.sendmsg-detail {
+  background: rgba(0, 0, 0, 0.02);
+  font-size: 0.8rem;
+}
+.sendmsg-to {
+  padding: 6px 12px;
+  font-weight: 600;
+  color: var(--color-accent);
+  border-bottom: 1px solid var(--border-color);
+}
+.sendmsg-body {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+
+/* CronCreate */
+.cron-detail {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+.cron-schedule {
+  display: inline-block;
+  background: var(--color-accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+}
+.cron-desc {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-primary);
+}
+.cron-prompt {
+  margin: 6px 0 0;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+
 .loading-indicator {
   display: flex;
   align-items: center;
@@ -975,15 +1083,15 @@ a {
   animation: dot-shimmer 18s linear infinite, dot-bounce 1.4s ease-in-out infinite;
 }
 
-.loading-dots span:nth-child(2)  { animation-delay: 0s, 0.12s; }
-.loading-dots span:nth-child(3)  { animation-delay: 0s, 0.24s; }
-.loading-dots span:nth-child(4)  { animation-delay: 0s, 0.36s; }
-.loading-dots span:nth-child(5)  { animation-delay: 0s, 0.48s; }
-.loading-dots span:nth-child(6)  { animation-delay: 0s, 0.60s; }
-.loading-dots span:nth-child(7)  { animation-delay: 0s, 0.72s; }
-.loading-dots span:nth-child(8)  { animation-delay: 0s, 0.84s; }
-.loading-dots span:nth-child(9)  { animation-delay: 0s, 0.96s; }
-.loading-dots span:nth-child(10) { animation-delay: 0s, 1.08s; }
+.loading-dots span:nth-child(2)  { animation-delay: -0.1s,  0.12s; }
+.loading-dots span:nth-child(3)  { animation-delay: -0.2s,  0.24s; }
+.loading-dots span:nth-child(4)  { animation-delay: -0.3s,  0.36s; }
+.loading-dots span:nth-child(5)  { animation-delay: -0.4s,  0.48s; }
+.loading-dots span:nth-child(6)  { animation-delay: -0.5s,  0.60s; }
+.loading-dots span:nth-child(7)  { animation-delay: -0.6s,  0.72s; }
+.loading-dots span:nth-child(8)  { animation-delay: -0.7s,  0.84s; }
+.loading-dots span:nth-child(9)  { animation-delay: -0.8s,  0.96s; }
+.loading-dots span:nth-child(10) { animation-delay: -0.9s,  1.08s; }
 
 @keyframes text-shimmer {
   0% { background-position: 100% 50%; }
@@ -1871,11 +1979,12 @@ a {
   color: var(--text-muted);
   margin: 0;
   line-height: 1.5;
+  text-wrap: balance;
 }
 .wake-btn.btn-icon {
   width: 72px;
   height: 72px;
-  margin-top: 40px;
+  margin-top: 20px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   color: #5aac6e;

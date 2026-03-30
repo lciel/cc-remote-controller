@@ -61,6 +61,19 @@ function formatToolDetail(name: string, input: Record<string, unknown>): string 
   if (name === 'TodoWrite') return 'Update tasks';
   if (name === 'EnterPlanMode') return '→ Plan mode';
   if (name === 'ExitPlanMode') return '→ Plan ready';
+  if (name === 'Skill' && input.skill) return input.args ? `/${input.skill} ${input.args}` : `/${input.skill}`;
+  if (name === 'ToolSearch') return input.query as string || '';
+  if (name === 'WebFetch' && input.url) return input.url as string;
+  if (name === 'WebSearch' && input.query) return input.query as string;
+  if (name === 'SendMessage' && input.to) return `→ ${input.to}`;
+  if (name === 'NotebookEdit' && input.notebook_path) return input.notebook_path as string;
+  if (name === 'TaskOutput' || name === 'TaskStop') return input.task_id ? `task ${input.task_id}` : name;
+  if (name === 'EnterWorktree') return '→ worktree';
+  if (name === 'ExitWorktree') return '← worktree';
+  if (name === 'CronCreate' && input.schedule) return input.schedule as string;
+  if (name === 'CronDelete' && input.cron_id) return input.cron_id as string;
+  if (name === 'CronList') return 'list';
+  if (name === 'RemoteTrigger') return input.trigger_id as string || 'trigger';
   return JSON.stringify(input, null, 2).slice(0, 500);
 }
 

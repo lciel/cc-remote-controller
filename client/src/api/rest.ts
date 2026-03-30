@@ -1,9 +1,9 @@
 function getToken(): string {
-  return sessionStorage.getItem('cc-auth-token') || '';
+  return localStorage.getItem('cc-auth-token') || '';
 }
 
 export function setToken(token: string): void {
-  sessionStorage.setItem('cc-auth-token', token);
+  localStorage.setItem('cc-auth-token', token);
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

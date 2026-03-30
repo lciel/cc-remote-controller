@@ -91,7 +91,7 @@ function getPreview(detail: string): string {
   return first;
 }
 
-const STATUS_TOOLS = new Set(['EnterPlanMode', 'ExitPlanMode']);
+const STATUS_TOOLS = new Set(['EnterPlanMode', 'ExitPlanMode', 'EnterWorktree', 'ExitWorktree', 'TaskOutput', 'TaskStop', 'CronList']);
 
 function renderDiff(detail: string) {
   const lines = detail.split('\n');
@@ -243,6 +243,55 @@ function renderTodoWrite(input: Record<string, unknown>) {
   );
 }
 
+function renderToolSearch(input: Record<string, unknown>) {
+  return (
+    <div class="toolsearch-detail">
+      <span class="toolsearch-query">{input.query as string}</span>
+      {input.max_results != null && <span class="toolsearch-max">max {String(input.max_results)}</span>}
+    </div>
+  );
+}
+
+function renderWebFetch(input: Record<string, unknown>) {
+  return (
+    <div class="webfetch-detail">
+      <span class="webfetch-url">{input.url as string}</span>
+      {input.prompt && <pre class="webfetch-prompt">{input.prompt as string}</pre>}
+    </div>
+  );
+}
+
+function renderWebSearch(input: Record<string, unknown>) {
+  const domains = Array.isArray(input.allowed_domains) ? (input.allowed_domains as string[]) : null;
+  return (
+    <div class="websearch-detail">
+      <span class="websearch-query">{input.query as string}</span>
+      {domains && domains.length > 0 && (
+        <div class="websearch-domains">{domains.join(', ')}</div>
+      )}
+    </div>
+  );
+}
+
+function renderSendMessage(input: Record<string, unknown>) {
+  return (
+    <div class="sendmsg-detail">
+      <div class="sendmsg-to">→ {input.to as string}</div>
+      {input.message && <pre class="sendmsg-body">{input.message as string}</pre>}
+    </div>
+  );
+}
+
+function renderCronCreate(input: Record<string, unknown>) {
+  return (
+    <div class="cron-detail">
+      <span class="cron-schedule">{input.schedule as string}</span>
+      {input.description && <span class="cron-desc">{input.description as string}</span>}
+      {input.prompt && <pre class="cron-prompt">{input.prompt as string}</pre>}
+    </div>
+  );
+}
+
 /**
  * Try to extract text from structured content (e.g. Agent results).
  * Agent results are JSON arrays like [{"type":"text","text":"..."}].
@@ -303,6 +352,11 @@ function ToolBlockView({ block, projectId }: { block: ToolBlock; projectId?: str
     }
     if (block.name === 'Agent' && block.input) return renderAgent(block.input);
     if (block.name === 'TodoWrite' && block.input) return renderTodoWrite(block.input);
+    if (block.name === 'ToolSearch' && block.input) return renderToolSearch(block.input);
+    if (block.name === 'WebFetch' && block.input) return renderWebFetch(block.input);
+    if (block.name === 'WebSearch' && block.input) return renderWebSearch(block.input);
+    if (block.name === 'SendMessage' && block.input) return renderSendMessage(block.input);
+    if (block.name === 'CronCreate' && block.input) return renderCronCreate(block.input);
     return <pre class="tool-detail">{block.detail}</pre>;
   };
 

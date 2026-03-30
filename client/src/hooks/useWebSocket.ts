@@ -5,7 +5,7 @@ let sharedClient: WsClient | null = null;
 
 function getWsClient(): WsClient {
   if (!sharedClient) {
-    const token = sessionStorage.getItem('cc-auth-token') || '';
+    const token = localStorage.getItem('cc-auth-token') || '';
     sharedClient = new WsClient(token);
     sharedClient.connect();
 
