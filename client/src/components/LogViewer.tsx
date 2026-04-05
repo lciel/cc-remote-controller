@@ -50,6 +50,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: ContentBlock[];
   images?: string[];  // data URIs for user-attached image thumbnails
+  status?: 'failed';
 }
 
 /** Try to detect language from file extension */
@@ -76,6 +77,8 @@ interface Props {
   loading?: boolean;
   loadingLabel?: string;
   projectId?: string;
+  onRetry?: () => void;
+  onDiscard?: () => void;
 }
 
 // Configure marked for compact output
@@ -426,7 +429,7 @@ function countBlocks(messages: ChatMessage[]): number {
   return n;
 }
 
-export function LogViewer({ messages, loading, loadingLabel, projectId }: Props) {
+export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry, onDiscard }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
   const userInteracting = useRef(false);
@@ -584,6 +587,15 @@ export function LogViewer({ messages, loading, loadingLabel, projectId }: Props)
             )}
           </div>
           {msg.content.map((block, j) => renderBlock(block, j, projectId))}
+          {msg.status === 'failed' && (
+            <div class="msg-failed-bar">
+              <span class="msg-failed-label">送信失敗</span>
+              <div class="msg-failed-actions">
+                {onRetry && <button class="msg-failed-btn msg-retry-btn" onClick={onRetry}>再送</button>}
+                {onDiscard && <button class="msg-failed-btn msg-discard-btn" onClick={onDiscard}>破棄</button>}
+              </div>
+            </div>
+          )}
           {msg.images && msg.images.length > 0 && (
             <div class="chat-images">
               {msg.images[0] === 'attached' ? (

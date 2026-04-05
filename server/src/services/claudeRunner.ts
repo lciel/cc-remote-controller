@@ -52,7 +52,7 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
 
   const escapedPrompt = shellEscape(prompt);
   const claudeBin = shellEscape(config.claudePath);
-  let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch'`;
+  let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch SendMessage Agent TeamCreate TeamDelete ToolSearch'`;
 
   if (model) {
     // Validate model value is alphanumeric with hyphens/dots/brackets only (no injection)

@@ -317,7 +317,12 @@ export function ProjectDetail({ id }: Props) {
   const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const failedPromptKey = id ? `failed-prompt:${id}` : null;
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(() =>
+    failedPromptKey ? localStorage.getItem(failedPromptKey) : null
+  );
+  const [pendingFailed, setPendingFailed] = useState(() => !!failedPromptKey && !!localStorage.getItem(failedPromptKey));
+  const pendingImagesRef = useRef<ImageAttachment[]>([]);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const contextLimitRef = useRef(200000);
@@ -336,8 +341,8 @@ export function ProjectDetail({ id }: Props) {
       setProject(proj);
 
       // Clear stale streaming state on reload (e.g. returning from background)
-      // pendingPrompt is always cleared — JSONL/DB history already contains the user prompt
-      setPendingPrompt(null);
+      // Keep failed prompt so user can retry — only clear if no failed prompt persisted
+      if (!failedPromptKey || !localStorage.getItem(failedPromptKey)) setPendingPrompt(null);
       const isIdle = proj.state !== 'RUNNING' && proj.state !== 'STOPPING';
       setJobActive(!isIdle);
       setStreamEvents([]);
@@ -381,7 +386,11 @@ export function ProjectDetail({ id }: Props) {
       // Clear pendingPrompt for unlinked mode (stream events will show the prompt via job_prompt).
       // For linked mode, pendingPrompt stays until job_finished when JSONL is reloaded.
       setProject((prev) => {
-        if (prev && !prev.claude_session_id) setPendingPrompt(null);
+        if (prev && !prev.claude_session_id) {
+          if (failedPromptKey) localStorage.removeItem(failedPromptKey);
+          setPendingFailed(false);
+          setPendingPrompt(null);
+        }
         return prev ? { ...prev, last_job_id: m.jobId as string } : prev;
       });
     } else if (m.type === 'event') {
@@ -412,6 +421,8 @@ export function ProjectDetail({ id }: Props) {
         },
       ]);
     } else if (m.type === 'job_finished') {
+      if (failedPromptKey) localStorage.removeItem(failedPromptKey);
+      setPendingFailed(false);
       setPendingPrompt(null);
       setJobActive(false);
       setProject((prev) => {
@@ -448,6 +459,7 @@ export function ProjectDetail({ id }: Props) {
       role: 'user',
       content: [{ type: 'text', text: pendingPrompt }],
       images: pendingImages.length > 0 ? pendingImages : undefined,
+      status: pendingFailed ? 'failed' : undefined,
     } : null;
 
     if (historyMessages.length > 0) {
@@ -463,11 +475,13 @@ export function ProjectDetail({ id }: Props) {
       if (pendingMsg) msgs = [...msgs, pendingMsg];
     }
     return msgs;
-  }, [historyMessages, rawEvents, streamEvents, pendingPrompt, pendingImages]);
+  }, [historyMessages, rawEvents, streamEvents, pendingPrompt, pendingImages, pendingFailed]);
 
   const handleRun = async (prompt: string, images?: ImageAttachment[]) => {
     if (!id) return;
     setPendingPrompt(prompt);
+    setPendingFailed(false);
+    pendingImagesRef.current = images || [];
     const dataUris = images ? images.map((img) => `data:${img.mediaType};base64,${img.data}`) : [];
     setPendingImages(dataUris);
     if (dataUris.length > 0) {
@@ -482,11 +496,25 @@ export function ProjectDetail({ id }: Props) {
     currentJobPromptRef.current = prompt;
     try {
       await api.runJob(id, prompt, images);
+      if (failedPromptKey) localStorage.removeItem(failedPromptKey);
     } catch (err) {
-      setPendingPrompt(null);
       setJobActive(false);
-      alert(err instanceof Error ? err.message : 'Failed to run job');
+      if (failedPromptKey) localStorage.setItem(failedPromptKey, prompt);
+      setPendingFailed(true);
     }
+  };
+
+  const handleRetry = () => {
+    if (!pendingPrompt) return;
+    handleRun(pendingPrompt, pendingImagesRef.current.length > 0 ? pendingImagesRef.current : undefined);
+  };
+
+  const handleDiscard = () => {
+    if (failedPromptKey) localStorage.removeItem(failedPromptKey);
+    setPendingPrompt(null);
+    setPendingFailed(false);
+    setPendingImages([]);
+    pendingImagesRef.current = [];
   };
 
   const handleCancel = async () => {
@@ -682,9 +710,11 @@ export function ProjectDetail({ id }: Props) {
       <div class="project-detail-body">
         <LogViewer
               messages={chatMessages}
-              loading={!!pendingPrompt || jobActive}
+              loading={(!!pendingPrompt && !pendingFailed) || jobActive}
               loadingLabel={pendingPrompt ? 'Thinking...' : 'Running...'}
               projectId={id}
+              onRetry={pendingFailed ? handleRetry : undefined}
+              onDiscard={pendingFailed ? handleDiscard : undefined}
             />
       </div>
       <PromptInput projectId={id} onSubmit={handleRun} onCancel={handleCancel} disabled={isRunning} running={isRunning} />

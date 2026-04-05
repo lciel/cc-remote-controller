@@ -601,13 +601,13 @@ a {
 .sheet-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   padding: 10px 16px 12px;
   flex-shrink: 0;
 }
 
 .sheet-header .label {
-  font-size: 0.9rem;
+  font-size: 1.2rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1083,15 +1083,15 @@ a {
   animation: dot-shimmer 18s linear infinite, dot-bounce 1.4s ease-in-out infinite;
 }
 
-.loading-dots span:nth-child(2)  { animation-delay: -0.1s,  0.12s; }
-.loading-dots span:nth-child(3)  { animation-delay: -0.2s,  0.24s; }
-.loading-dots span:nth-child(4)  { animation-delay: -0.3s,  0.36s; }
-.loading-dots span:nth-child(5)  { animation-delay: -0.4s,  0.48s; }
-.loading-dots span:nth-child(6)  { animation-delay: -0.5s,  0.60s; }
-.loading-dots span:nth-child(7)  { animation-delay: -0.6s,  0.72s; }
-.loading-dots span:nth-child(8)  { animation-delay: -0.7s,  0.84s; }
-.loading-dots span:nth-child(9)  { animation-delay: -0.8s,  0.96s; }
-.loading-dots span:nth-child(10) { animation-delay: -0.9s,  1.08s; }
+.loading-dots span:nth-child(2)  { animation-delay: 0.15s, 0.12s; }
+.loading-dots span:nth-child(3)  { animation-delay: 0.30s, 0.24s; }
+.loading-dots span:nth-child(4)  { animation-delay: 0.45s, 0.36s; }
+.loading-dots span:nth-child(5)  { animation-delay: 0.60s, 0.48s; }
+.loading-dots span:nth-child(6)  { animation-delay: 0.75s, 0.60s; }
+.loading-dots span:nth-child(7)  { animation-delay: 0.90s, 0.72s; }
+.loading-dots span:nth-child(8)  { animation-delay: 1.05s, 0.84s; }
+.loading-dots span:nth-child(9)  { animation-delay: 1.20s, 0.96s; }
+.loading-dots span:nth-child(10) { animation-delay: 1.35s, 1.08s; }
 
 @keyframes text-shimmer {
   0% { background-position: 100% 50%; }
@@ -1413,6 +1413,48 @@ a {
 }
 
 /* Chat image thumbnails */
+.msg-failed-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(220, 53, 53, 0.08);
+  border: 1px solid rgba(220, 53, 53, 0.25);
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.msg-failed-label {
+  color: #c0392b;
+  font-weight: 500;
+}
+
+.msg-failed-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.msg-failed-btn {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+}
+
+.msg-retry-btn {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.msg-discard-btn {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color) !important;
+}
+
 .chat-images {
   display: flex;
   gap: 6px;
