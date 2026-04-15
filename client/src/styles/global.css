@@ -1303,7 +1303,15 @@ a {
   display: flex;
   gap: 8px;
   align-items: center;
-  justify-content: space-between;
+}
+
+.prompt-input .drive-toggle-btn {
+  margin-left: auto;
+}
+
+.prompt-input:not(:has(.drive-toggle-btn)) .send-btn,
+.prompt-input:not(:has(.drive-toggle-btn)) .stop-btn {
+  margin-left: auto;
 }
 
 .prompt-textarea {
@@ -1355,6 +1363,16 @@ a {
 
 .image-attach-btn:hover {
   color: var(--text-secondary);
+}
+
+.drive-toggle-btn {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.drive-toggle-btn:hover {
+  color: var(--text-primary);
 }
 
 .send-btn {
@@ -2079,4 +2097,114 @@ a {
   color: var(--text-secondary);
   margin: 4px 0 0;
   line-height: 1.4;
+}
+
+/* ── Drive Mode ── */
+.drive-active {
+  color: var(--color-error) !important;
+  animation: drive-btn-pulse 2s ease-in-out infinite;
+}
+@keyframes drive-btn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.drive-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px;
+}
+
+.drive-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.drive-pulse {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  animation: drive-pulse-anim 2s ease-in-out infinite;
+}
+
+.drive-listening .drive-pulse {
+  background: var(--color-success);
+  box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4);
+  animation: drive-pulse-ring 1.5s ease-out infinite;
+}
+
+.drive-processing .drive-pulse {
+  background: var(--color-warning);
+  animation: drive-pulse-spin 1.2s linear infinite;
+}
+
+.drive-speaking .drive-pulse {
+  background: var(--color-accent);
+  animation: drive-pulse-anim 0.8s ease-in-out infinite;
+}
+
+@keyframes drive-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.5); }
+  70% { box-shadow: 0 0 0 30px rgba(52, 199, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+}
+
+@keyframes drive-pulse-anim {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.7; }
+}
+
+@keyframes drive-pulse-spin {
+  0% { transform: rotate(0deg); border-radius: 50%; }
+  25% { border-radius: 40%; }
+  50% { transform: rotate(180deg); border-radius: 50%; }
+  75% { border-radius: 40%; }
+  100% { transform: rotate(360deg); border-radius: 50%; }
+}
+
+.drive-label {
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.drive-transcript {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 1.1rem;
+  text-align: center;
+  max-width: 400px;
+  line-height: 1.5;
+  min-height: 2em;
+}
+
+.drive-assistant-text {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  text-align: center;
+  max-width: 500px;
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.drive-stop-btn {
+  margin-top: 24px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 12px 32px;
+  font-size: 1rem;
+  border-radius: 24px;
 }

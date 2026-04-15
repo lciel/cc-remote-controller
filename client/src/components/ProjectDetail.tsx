@@ -8,6 +8,7 @@ import { PromptInput } from './PromptInput';
 import { ContextBar, contextLevel as getContextLevel } from './ContextBar';
 import { ConversationSwitcher } from './ConversationSwitcher';
 import { BottomSheet } from './BottomSheet';
+import { useDriveMode } from '../hooks/useDriveMode';
 
 interface Props {
   id?: string;
@@ -93,6 +94,11 @@ function parseContextLimit(model: string | null): number {
   return 200000;
 }
 
+/** Strip drive mode prefix from displayed user prompts */
+function stripDrivePrefix(text: string): string {
+  return text.replace(/^【ドライブモード】[^\n]*\n+/, '');
+}
+
 /** Strip "[Attached images ...]" section appended by server */
 function stripImagePaths(text: string): { text: string; hadImages: boolean } {
   const re = /\n?\n?\[Attached images - use Read tool to view:\]\n[\s\S]*$/;
@@ -128,7 +134,8 @@ function buildChatMessages(rawEvents: RawEvent[], promptImages?: Map<string, str
       flushAssistant();
       currentJobId = raw.job_id;
       if (raw.job_prompt && !skipUserPrompts) {
-        const { text: cleanPrompt, hadImages } = stripImagePaths(raw.job_prompt);
+        const { text: stripped, hadImages } = stripImagePaths(raw.job_prompt);
+        const cleanPrompt = stripDrivePrefix(stripped);
         const imgs = promptImages?.get(cleanPrompt);
         messages.push({
           role: 'user',
@@ -203,7 +210,8 @@ function buildHistoryMessages(history: ClaudeHistoryMessage[], promptImages?: Ma
       if (rawText.includes('<task-notification>') || rawText.includes('<system-reminder>')) {
         continue;
       }
-      const { text, hadImages } = stripImagePaths(rawText);
+      const { text: stripped, hadImages } = stripImagePaths(rawText);
+      const text = stripDrivePrefix(stripped);
       const imgs = promptImages?.get(text);
       messages.push({
         role: 'user',
@@ -457,7 +465,7 @@ export function ProjectDetail({ id }: Props) {
     const imgMap = promptImagesRef.current;
     const pendingMsg: ChatMessage | null = pendingPrompt ? {
       role: 'user',
-      content: [{ type: 'text', text: pendingPrompt }],
+      content: [{ type: 'text', text: stripDrivePrefix(pendingPrompt) }],
       images: pendingImages.length > 0 ? pendingImages : undefined,
       status: pendingFailed ? 'failed' : undefined,
     } : null;
@@ -561,6 +569,33 @@ export function ProjectDetail({ id }: Props) {
       alert('Failed to delete project');
     }
   };
+
+  // Extract latest assistant text for TTS
+  const latestAssistantText = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const msg = chatMessages[i];
+      if (msg.role !== 'assistant') continue;
+      const texts = msg.content
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map(b => b.text);
+      if (texts.length > 0) return texts.join('\n');
+    }
+    return '';
+  }, [chatMessages]);
+
+  const driveMode = useDriveMode({
+    onSubmit: (prompt) => handleRun(prompt),
+    jobActive,
+    latestAssistantText,
+    onCommand: (text) => {
+      // Voice command: start a new conversation by unlinking current session
+      if (/新しい(会話|かいわ)|新規(会話|かいわ)|会話.*(作|始|新)/.test(text)) {
+        handleLinkConversation('');
+        return true;
+      }
+      return false;
+    },
+  });
 
   if (loading) return (
     <div class="page">
@@ -717,7 +752,38 @@ export function ProjectDetail({ id }: Props) {
               onDiscard={pendingFailed ? handleDiscard : undefined}
             />
       </div>
-      <PromptInput projectId={id} onSubmit={handleRun} onCancel={handleCancel} disabled={isRunning} running={isRunning} />
+      <PromptInput
+        projectId={id}
+        onSubmit={handleRun}
+        onCancel={handleCancel}
+        disabled={isRunning}
+        running={isRunning}
+        driveSupported={driveMode.supported}
+        driveActive={driveMode.state !== 'off'}
+        onDriveToggle={driveMode.toggle}
+      />
+
+      {driveMode.state !== 'off' && (
+        <div class="drive-overlay">
+          <div class={`drive-indicator drive-${driveMode.state}`}>
+            <div class="drive-pulse" />
+            <span class="drive-label">
+              {driveMode.state === 'listening' ? 'Listening...'
+                : driveMode.state === 'processing' ? 'Thinking...'
+                : 'Speaking...'}
+            </span>
+          </div>
+          {driveMode.transcript && (
+            <div class="drive-transcript">{driveMode.transcript}</div>
+          )}
+          {driveMode.currentSpeechText && (
+            <div class="drive-assistant-text">{driveMode.currentSpeechText}</div>
+          )}
+          <button class="btn drive-stop-btn" onClick={driveMode.toggle}>
+            Stop Drive Mode
+          </button>
+        </div>
+      )}
 
       <aside class={`detail-sidebar context-${ctxLevel}`}>
         <div class="sidebar-item">

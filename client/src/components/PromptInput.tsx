@@ -14,6 +14,9 @@ interface Props {
   onCancel?: () => void;
   disabled: boolean;
   running?: boolean;
+  driveSupported?: boolean;
+  driveActive?: boolean;
+  onDriveToggle?: () => void;
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -33,7 +36,7 @@ function getDraftKey(projectId?: string) {
   return projectId ? `draft:${projectId}` : null;
 }
 
-export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }: Props) {
+export function PromptInput({ projectId, onSubmit, onCancel, disabled, running, driveSupported, driveActive, onDriveToggle }: Props) {
   const draftKey = getDraftKey(projectId);
   const [value, setValue] = useState(() => {
     if (!draftKey) return '';
@@ -177,6 +180,20 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running }
         >
           +
         </button>
+        {driveSupported && (
+          <button
+            class={`btn-icon drive-toggle-btn${driveActive ? ' drive-active' : ''}`}
+            onClick={onDriveToggle}
+            title="Drive mode"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          </button>
+        )}
         {running ? (
           <button
             class="btn-icon stop-btn"
