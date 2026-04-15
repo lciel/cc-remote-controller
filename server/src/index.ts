@@ -1,5 +1,5 @@
 import { createServer as createHttpServer } from 'http';
-import { createServer as createHttpsServer } from 'https';
+import { createServer as createHttpsServer, Server as HttpsServer } from 'https';
 import fs from 'fs';
 import os from 'os';
 import { WebSocketServer } from 'ws';
@@ -89,6 +89,20 @@ function shutdown() {
   setTimeout(() => {
     process.exit(1);
   }, 3000);
+}
+
+// Reload SSL certificates on SIGHUP (e.g., after certbot renew)
+if (config.ssl) {
+  process.on('SIGHUP', () => {
+    try {
+      const cert = fs.readFileSync(config.ssl!.certPath);
+      const key = fs.readFileSync(config.ssl!.keyPath);
+      (server as HttpsServer).setSecureContext({ cert, key });
+      console.log('[SSL] Certificates reloaded');
+    } catch (err) {
+      console.error('[SSL] Failed to reload certificates:', (err as Error).message);
+    }
+  });
 }
 
 process.on('SIGINT', shutdown);
