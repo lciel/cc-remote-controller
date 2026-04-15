@@ -1,4 +1,6 @@
-import { createServer } from 'http';
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
+import fs from 'fs';
 import os from 'os';
 import { WebSocketServer } from 'ws';
 import qrcode from 'qrcode-terminal';
@@ -27,8 +29,15 @@ initDb();
 // Clean up any leftover temp images from previous runs
 cleanupUploadDir();
 
-// Create HTTP server
-const server = createServer(app);
+// Create HTTP(S) server
+const server = config.ssl
+  ? createHttpsServer({
+      cert: fs.readFileSync(config.ssl.certPath),
+      key: fs.readFileSync(config.ssl.keyPath),
+    }, app)
+  : createHttpServer(app);
+const protocol = config.ssl ? 'https' : 'http';
+const wsProtocol = config.ssl ? 'wss' : 'ws';
 
 // Create WebSocket server on the same HTTP server
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -36,8 +45,8 @@ setupWebSocket(wss);
 
 // Start listening
 server.listen(config.port, '0.0.0.0', () => {
-  console.log(`Server listening on http://0.0.0.0:${config.port}`);
-  console.log(`WebSocket available at ws://0.0.0.0:${config.port}/ws`);
+  console.log(`Server listening on ${protocol}://0.0.0.0:${config.port}${config.ssl ? ' (SSL)' : ''}`);
+  console.log(`WebSocket available at ${wsProtocol}://0.0.0.0:${config.port}/ws`);
   console.log('');
 
   let baseUrl: string;
@@ -46,7 +55,7 @@ server.listen(config.port, '0.0.0.0', () => {
     console.log(`Using configured HOST_URL: ${baseUrl}`);
   } else {
     const ip = getLocalIp();
-    baseUrl = `http://${ip}:${config.port}`;
+    baseUrl = `${protocol}://${ip}:${config.port}`;
     console.log(`Auto-detected URL: ${baseUrl}`);
     console.log('  (auto-detected IP may be incorrect in WSL2. Set HOST_URL in .env to override.)');
   }
