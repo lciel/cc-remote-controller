@@ -23,7 +23,7 @@ export function ProjectList({ onPreviewOffline }: Props) {
   const [creating, setCreating] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [tokenInput, setTokenInput] = useState(
-    sessionStorage.getItem('cc-auth-token') || ''
+    localStorage.getItem('cc-auth-token') || ''
   );
   const [wolUrlInput, setWolUrlInput] = useState(
     localStorage.getItem(WOL_URL_KEY) || ''

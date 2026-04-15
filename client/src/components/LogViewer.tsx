@@ -556,6 +556,28 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
 
   const latest = (hasNewMessages || newMsgState === 'exiting') ? getLatestPreview(messages) : null;
 
+  // Inject copy buttons into <pre> blocks after render
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.querySelectorAll('pre:not([data-copy-btn])').forEach(pre => {
+      pre.setAttribute('data-copy-btn', '1');
+      const btn = document.createElement('button');
+      btn.className = 'code-copy-btn';
+      btn.textContent = 'Copy';
+      btn.addEventListener('click', () => {
+        const code = pre.querySelector('code');
+        const text = (code || pre).textContent || '';
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        });
+      });
+      (pre as HTMLElement).style.position = 'relative';
+      pre.appendChild(btn);
+    });
+  }, [messages]);
+
   return (
     <div class="log-viewer" ref={containerRef} onScroll={handleScroll}>
       {messages.length === 0 && <div class="log-empty">No messages yet.</div>}
