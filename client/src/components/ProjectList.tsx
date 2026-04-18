@@ -97,10 +97,26 @@ export function ProjectList({ onPreviewOffline }: Props) {
 
   const handleSaveToken = () => {
     setToken(tokenInput);
-    localStorage.setItem(WOL_URL_KEY, wolUrlInput.trim());
-    localStorage.setItem(SLEEP_CMD_KEY, sleepCmdInput.trim());
-    api.updateSettings({ wolUrl: wolUrlInput.trim(), sleepCmd: sleepCmdInput.trim() }).catch(() => { /* ignore */ });
     reconnectWs();
+    // After reconnect with new token, fetch server settings and then save any local changes
+    api.getSettings().then(s => {
+      const wolTrimmed = wolUrlInput.trim();
+      const sleepTrimmed = sleepCmdInput.trim();
+      // Only update server if values differ from what server has
+      const updates: { wolUrl?: string; sleepCmd?: string } = {};
+      if (wolTrimmed && wolTrimmed !== s.wolUrl) updates.wolUrl = wolTrimmed;
+      if (sleepTrimmed && sleepTrimmed !== s.sleepCmd) updates.sleepCmd = sleepTrimmed;
+      // Sync server values to local
+      if (s.wolUrl) { localStorage.setItem(WOL_URL_KEY, s.wolUrl); setWolUrlInput(s.wolUrl); }
+      if (s.sleepCmd) { localStorage.setItem(SLEEP_CMD_KEY, s.sleepCmd); setSleepCmdInput(s.sleepCmd); }
+      if (Object.keys(updates).length > 0) {
+        api.updateSettings(updates).catch(() => { /* ignore */ });
+      }
+    }).catch(() => {
+      // Token might be wrong; still save locally
+      localStorage.setItem(WOL_URL_KEY, wolUrlInput.trim());
+      localStorage.setItem(SLEEP_CMD_KEY, sleepCmdInput.trim());
+    });
     setShowSettings(false);
     refresh();
   };

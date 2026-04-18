@@ -433,13 +433,12 @@ export function ProjectDetail({ id }: Props) {
       setPendingFailed(false);
       setPendingPrompt(null);
       setJobActive(false);
-      setProject((prev) => {
-        const updated = prev ? { ...prev, state: 'IDLE' as const } : prev;
-        // Reload from JSONL if linked, otherwise from PWA events
-        if (id && updated) {
-          if (updated.claude_session_id) {
-            loadHistory(updated).then(() => {
-              // Keep stderr events since JSONL history doesn't include them
+      // Re-fetch project to get latest claude_session_id (may have been set during job)
+      if (id) {
+        api.getProject(id).then((fresh) => {
+          setProject(fresh);
+          if (fresh.claude_session_id) {
+            loadHistory(fresh).then(() => {
               setStreamEvents(prev => prev.filter(e => e.type === 'stderr'));
               currentJobPromptRef.current = null;
             }).catch(() => {});
@@ -454,9 +453,8 @@ export function ProjectDetail({ id }: Props) {
               currentJobPromptRef.current = null;
             }).catch(() => {});
           }
-        }
-        return updated;
-      });
+        }).catch(() => {});
+      }
     }
   });
 
