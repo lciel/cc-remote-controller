@@ -22,7 +22,7 @@ function parseContextLimit(model: string): number {
     const unit = match[2].toLowerCase();
     return unit === 'm' ? num * 1000000 : num * 1000;
   }
-  if (/claude-opus-4-6/.test(model)) return 1000000;
+  if (/claude-opus-4-[67]/.test(model)) return 1000000;
   return 200000;
 }
 
@@ -294,8 +294,6 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
   return messages;
 }
 
-const MAX_TOOL_RESULT_LENGTH = 10000;
-
 /**
  * Find a tool_result by tool_use_id in a Claude JSONL conversation file.
  */
@@ -318,12 +316,23 @@ export async function getToolResult(repoPath: string, sessionId: string, toolUse
         if (!Array.isArray(content)) continue;
         for (const block of content) {
           if (block.type === 'tool_result' && block.tool_use_id === toolUseId) {
-            const result = typeof block.content === 'string'
-              ? block.content
-              : JSON.stringify(block.content, null, 2);
-            return result.length > MAX_TOOL_RESULT_LENGTH
-              ? result.slice(0, MAX_TOOL_RESULT_LENGTH) + '\n... (truncated)'
-              : result;
+            let result: string;
+            if (typeof block.content === 'string') {
+              result = block.content;
+            } else if (Array.isArray(block.content)) {
+              // Prefer extracting text from structured blocks (e.g. Agent results)
+              // so the client gets plain markdown instead of a JSON wrapper.
+              const texts: string[] = [];
+              for (const part of block.content) {
+                if (part && typeof part === 'object' && part.type === 'text' && typeof part.text === 'string') {
+                  texts.push(part.text);
+                }
+              }
+              result = texts.length > 0 ? texts.join('\n\n') : JSON.stringify(block.content, null, 2);
+            } else {
+              result = JSON.stringify(block.content, null, 2);
+            }
+            return result;
           }
         }
       } catch { continue; }
