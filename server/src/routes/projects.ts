@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import * as projectService from '../services/projectService.js';
 import * as jobService from '../services/jobService.js';
@@ -14,7 +15,7 @@ const MAX_PROMPT_BYTES = 1 * 1024 * 1024; // 1 MB
 
 // POST /api/projects - Create project
 router.post('/', (req: Request, res: Response) => {
-  const { name, repoPath } = req.body;
+  const { name, repoPath, createDir } = req.body;
   if (!name || !repoPath) {
     res.status(400).json({ error: 'name and repoPath are required' });
     return;
@@ -32,11 +33,52 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
   if (!fs.existsSync(repoPath)) {
-    res.status(400).json({ error: 'repoPath does not exist' });
-    return;
+    if (createDir) {
+      fs.mkdirSync(repoPath, { recursive: true });
+    } else {
+      res.status(400).json({ error: 'repoPath does not exist' });
+      return;
+    }
   }
   const project = projectService.createProject(name, repoPath);
   res.status(201).json(project);
+});
+
+// GET /api/projects/browse - Browse directories
+router.get('/browse', (req: Request, res: Response) => {
+  const dirPath = typeof req.query.path === 'string' ? req.query.path : '';
+
+  if (!dirPath) {
+    // Return allowed base directories
+    const env = (process.env.ALLOWED_REPO_BASES || '').trim();
+    const bases = env ? env.split(':').map(p => path.resolve(p)) : [os.homedir()];
+    res.json({ current: '', dirs: bases.map(b => ({ name: path.basename(b), path: b })) });
+    return;
+  }
+
+  if (!path.isAbsolute(dirPath)) {
+    res.status(400).json({ error: 'path must be absolute' });
+    return;
+  }
+  if (!isAllowedRepoPath(dirPath)) {
+    res.status(403).json({ error: 'path is outside allowed directories' });
+    return;
+  }
+  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+    res.status(400).json({ error: 'path is not a directory' });
+    return;
+  }
+
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    const dirs = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(e => ({ name: e.name, path: path.join(dirPath, e.name) }));
+    res.json({ current: dirPath, dirs });
+  } catch {
+    res.status(500).json({ error: 'Failed to read directory' });
+  }
 });
 
 // GET /api/projects - List projects
@@ -143,7 +185,7 @@ router.patch('/:id', (req: Request, res: Response) => {
     projectService.updateClaudeSessionId(project.id, claudeSessionId);
   }
   if (model !== undefined) {
-    const ALLOWED_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-6[1m]'];
+    const ALLOWED_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-7[1m]'];
     if (model !== null && !ALLOWED_MODELS.includes(model)) {
       res.status(400).json({ error: `model must be one of: ${ALLOWED_MODELS.join(', ')}` });
       return;
@@ -212,6 +254,186 @@ router.get('/:id/tool-result/:toolUseId', async (req: Request, res: Response) =>
 
   const result = await getToolResult(project.repo_path, project.claude_session_id, req.params.toolUseId);
   res.json({ result });
+});
+
+// GET /api/projects/:id/files - List files/directories within project repo
+router.get('/:id/files', (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const rel = typeof req.query.path === 'string' ? req.query.path : '';
+  const target = path.resolve(project.repo_path, rel);
+  // Reject traversal
+  if (target !== project.repo_path && !target.startsWith(project.repo_path + path.sep)) {
+    res.status(403).json({ error: 'Path outside project' });
+    return;
+  }
+  if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
+    res.status(400).json({ error: 'Not a directory' });
+    return;
+  }
+  try {
+    const entries = fs.readdirSync(target, { withFileTypes: true });
+    const items = entries
+      .filter(e => !e.name.startsWith('.') || e.name === '.gitignore' || e.name === '.env.example')
+      .map(e => {
+        const full = path.join(target, e.name);
+        let size = 0;
+        let mtime = 0;
+        try {
+          const st = fs.statSync(full);
+          size = e.isFile() ? st.size : 0;
+          mtime = st.mtimeMs;
+        } catch { /* ignore */ }
+        return {
+          name: e.name,
+          type: e.isDirectory() ? 'dir' : 'file',
+          size,
+          mtime,
+          path: path.relative(project.repo_path, full),
+        };
+      })
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    res.json({
+      current: path.relative(project.repo_path, target),
+      items,
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to read directory' });
+  }
+});
+
+const MAX_FILE_SIZE = 1024 * 1024; // 1 MB (for text preview)
+const MAX_MEDIA_SIZE = 20 * 1024 * 1024; // 20 MB (for raw media streaming)
+
+const MIME_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  pdf: 'application/pdf',
+};
+
+function mimeFor(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  return (ext && MIME_TYPES[ext]) || 'application/octet-stream';
+}
+
+// GET /api/projects/:id/file - Read a file's content
+router.get('/:id/file', (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const rel = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!rel) {
+    res.status(400).json({ error: 'path is required' });
+    return;
+  }
+  const target = path.resolve(project.repo_path, rel);
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+    res.status(400).json({ error: 'Not a file' });
+    return;
+  }
+  const stat = fs.statSync(target);
+  if (stat.size > MAX_FILE_SIZE) {
+    res.status(413).json({ error: 'File too large', size: stat.size, limit: MAX_FILE_SIZE });
+    return;
+  }
+  try {
+    const buf = fs.readFileSync(target);
+    // Detect binary: look for null bytes in first 8KB
+    const sample = buf.subarray(0, Math.min(8192, buf.length));
+    const isBinary = sample.includes(0);
+    if (isBinary) {
+      res.json({ path: rel, size: stat.size, binary: true, content: null });
+      return;
+    }
+    res.json({
+      path: rel,
+      size: stat.size,
+      binary: false,
+      content: buf.toString('utf-8'),
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to read file' });
+  }
+});
+
+// POST /api/projects/:id/files-exist - Check which paths exist as files
+router.post('/:id/files-exist', (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const paths = Array.isArray(req.body?.paths) ? req.body.paths : null;
+  if (!paths) {
+    res.status(400).json({ error: 'paths array is required' });
+    return;
+  }
+  const results: Record<string, boolean> = {};
+  for (const rel of paths) {
+    if (typeof rel !== 'string' || rel.length === 0 || rel.length > 500) {
+      results[rel] = false;
+      continue;
+    }
+    try {
+      const target = path.resolve(project.repo_path, rel);
+      results[rel] = fs.existsSync(target) && fs.statSync(target).isFile();
+    } catch {
+      results[rel] = false;
+    }
+  }
+  res.json({ results });
+});
+
+// GET /api/projects/:id/file-raw - Stream a file's raw bytes with Content-Type
+router.get('/:id/file-raw', (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const rel = typeof req.query.path === 'string' ? req.query.path : '';
+  if (!rel) {
+    res.status(400).json({ error: 'path is required' });
+    return;
+  }
+  const target = path.resolve(project.repo_path, rel);
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+    res.status(400).json({ error: 'Not a file' });
+    return;
+  }
+  const stat = fs.statSync(target);
+  if (stat.size > MAX_MEDIA_SIZE) {
+    res.status(413).json({ error: 'File too large', size: stat.size, limit: MAX_MEDIA_SIZE });
+    return;
+  }
+  const mime = mimeFor(path.basename(target));
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Length', String(stat.size));
+  res.setHeader('Cache-Control', 'no-store');
+  fs.createReadStream(target).pipe(res);
 });
 
 // GET /api/projects/:id/git-branch - Get current git branch

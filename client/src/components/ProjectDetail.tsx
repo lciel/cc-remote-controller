@@ -8,6 +8,8 @@ import { PromptInput } from './PromptInput';
 import { ContextBar, contextLevel as getContextLevel } from './ContextBar';
 import { ConversationSwitcher } from './ConversationSwitcher';
 import { BottomSheet } from './BottomSheet';
+import { FileBrowser, invalidateFileListCache } from './FileBrowser';
+import { FilePreviewSheet } from './FilePreviewSheet';
 import { useDriveMode } from '../hooks/useDriveMode';
 
 interface Props {
@@ -90,7 +92,7 @@ function parseContextLimit(model: string | null): number {
     const unit = match[2].toLowerCase();
     return unit === 'm' ? num * 1000000 : num * 1000;
   }
-  if (/claude-opus-4-6/.test(model)) return 1000000;
+  if (/claude-opus-4-[67]/.test(model)) return 1000000;
   return 200000;
 }
 
@@ -289,6 +291,63 @@ function loadStoredImages(projectId: string): Map<string, string[]> {
 const IMG_KEY_PREFIX = 'img:';
 const MAX_IMG_PROJECTS = 10;
 
+/**
+ * Walk ancestors from `el` and return true if any can still horizontally
+ * scroll in the given direction. Used to defer drawer-drag gestures to
+ * nested horizontally-scrollable content (e.g. code blocks).
+ */
+function ancestorCanScrollHorizontally(el: Element | null, direction: 'left' | 'right', stopAt?: Element | null): boolean {
+  let cur: Element | null = el;
+  while (cur && cur !== document.body) {
+    if (stopAt && cur === stopAt) break;
+    if (cur instanceof HTMLElement) {
+      const style = window.getComputedStyle(cur);
+      const overflowX = style.overflowX;
+      if (overflowX === 'auto' || overflowX === 'scroll') {
+        if (cur.scrollWidth > cur.clientWidth + 1) {
+          if (direction === 'left') {
+            // Finger moves left → content moves left → scrollLeft increases.
+            // Element can consume if it can scroll further right.
+            if (cur.scrollLeft < cur.scrollWidth - cur.clientWidth - 1) return true;
+          } else {
+            // Finger moves right → scrollLeft decreases.
+            if (cur.scrollLeft > 1) return true;
+          }
+        }
+      }
+    }
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+/**
+ * Animate a numeric value from `from` to `to` over `duration` ms with ease-out.
+ * Returns a cancel function.
+ */
+function animateValue(
+  from: number,
+  to: number,
+  duration: number,
+  onUpdate: (v: number) => void,
+  onDone: () => void
+): () => void {
+  const start = performance.now();
+  let rafId = 0;
+  let cancelled = false;
+  const tick = (now: number) => {
+    if (cancelled) return;
+    const t = Math.min((now - start) / duration, 1);
+    // easeOutCubic
+    const eased = 1 - Math.pow(1 - t, 3);
+    onUpdate(from + (to - from) * eased);
+    if (t < 1) rafId = requestAnimationFrame(tick);
+    else onDone();
+  };
+  rafId = requestAnimationFrame(tick);
+  return () => { cancelled = true; cancelAnimationFrame(rafId); };
+}
+
 function saveStoredImages(projectId: string, prompt: string, thumbnails: string[]) {
   try {
     const key = `${IMG_KEY_PREFIX}${projectId}`;
@@ -324,6 +383,11 @@ export function ProjectDetail({ id }: Props) {
   const [showLinkPanel, setShowLinkPanel] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const [drawerDragX, setDrawerDragX] = useState<number | null>(null);
+  const drawerDragRef = useRef<{ startX: number; startY: number; startTime: number; panelWidth: number; committed: boolean; target: Element | null } | null>(null);
+  const drawerAnimCancelRef = useRef<(() => void) | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const failedPromptKey = id ? `failed-prompt:${id}` : null;
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(() =>
@@ -485,6 +549,8 @@ export function ProjectDetail({ id }: Props) {
 
   const handleRun = async (prompt: string, images?: ImageAttachment[]) => {
     if (!id) return;
+    // Claude may modify files during the job — drop cached listings for this project
+    invalidateFileListCache(id);
     setPendingPrompt(prompt);
     setPendingFailed(false);
     pendingImagesRef.current = images || [];
@@ -530,6 +596,29 @@ export function ProjectDetail({ id }: Props) {
     } catch {
       alert('Failed to cancel job');
     }
+  };
+
+  // Desktop button-driven open: animate slide-in from offscreen using the same
+  // rAF driver as the mobile drag-release path.
+  const handleOpenFileBrowser = () => {
+    if (showFileBrowser) return;
+    if (drawerAnimCancelRef.current) {
+      drawerAnimCancelRef.current();
+      drawerAnimCancelRef.current = null;
+    }
+    const panelWidth = Math.min(window.innerWidth, 500);
+    setShowFileBrowser(true);
+    setDrawerDragX(panelWidth);
+    drawerAnimCancelRef.current = animateValue(
+      panelWidth,
+      0,
+      200,
+      (v) => setDrawerDragX(v),
+      () => {
+        drawerAnimCancelRef.current = null;
+        setDrawerDragX(null);
+      }
+    );
   };
 
   const handleLinkConversation = async (claudeSessionId: string) => {
@@ -627,6 +716,8 @@ export function ProjectDetail({ id }: Props) {
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </a>
+        {/* Invisible spacer to keep title centered on desktop, balancing the extra right-side button */}
+        <div class="desktop-only header-spacer" aria-hidden="true" />
         <div class="header-info">
           <h1 class="header-title-btn" onClick={() => { setShowProjectMenu(true); setConfirmDelete(false); }}>{project.name}</h1>
           {(contextUsage || gitBranch) && (
@@ -639,6 +730,11 @@ export function ProjectDetail({ id }: Props) {
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
             <rect x="1" y="1" width="15" height="12" rx="2.5" />
             <path style={{ fill: 'var(--bg-primary)' }} d="M9.5 7H19.5A2.5 2.5 0 0122 9.5V16.5A2.5 2.5 0 0119.5 19H14L12 22V19H9.5A2.5 2.5 0 017 16.5V9.5A2.5 2.5 0 019.5 7Z" />
+          </svg>
+        </button>
+        <button class="btn-icon header-circle-btn desktop-only" onClick={handleOpenFileBrowser} title="Browse files">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
         </button>
       </header>
@@ -685,7 +781,7 @@ export function ProjectDetail({ id }: Props) {
                   {([
                     { value: null, label: 'Default', desc: 'Claude が自動選択' },
                     { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', desc: 'バランス重視・1Mコンテキスト' },
-                    { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6', desc: '高精度・高負荷タスク向け・1Mコンテキスト' },
+                    { value: 'claude-opus-4-7[1m]', label: 'Opus 4.7', desc: '高精度・高負荷タスク向け・1Mコンテキスト' },
                   ] as { value: string | null; label: string; desc: string }[]).map(opt => {
                     const isActive = (project.model ?? null) === opt.value;
                     return (
@@ -740,7 +836,82 @@ export function ProjectDetail({ id }: Props) {
         </BottomSheet>
       )}
 
-      <div class="project-detail-body">
+      <div
+        class="project-detail-body"
+        onTouchStart={(e) => {
+          if (showFileBrowser) return;
+          const t = e.touches[0];
+          const panelWidth = Math.min(window.innerWidth, 500);
+          // Cancel any in-flight snap animation so the new drag takes over
+          if (drawerAnimCancelRef.current) {
+            drawerAnimCancelRef.current();
+            drawerAnimCancelRef.current = null;
+          }
+          drawerDragRef.current = {
+            startX: t.clientX,
+            startY: t.clientY,
+            startTime: Date.now(),
+            panelWidth,
+            committed: false,
+            target: e.target as Element,
+          };
+        }}
+        onTouchMove={(e) => {
+          const s = drawerDragRef.current;
+          if (!s) return;
+          const t = e.touches[0];
+          const dx = t.clientX - s.startX;
+          const dy = t.clientY - s.startY;
+          if (!s.committed) {
+            // Wait for small threshold then decide direction
+            if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+            if (Math.abs(dy) > Math.abs(dx)) {
+              // Vertical-dominant — let normal scroll happen
+              drawerDragRef.current = null;
+              return;
+            }
+            // Defer to a horizontally-scrollable ancestor if one can consume the drag
+            const direction: 'left' | 'right' = dx < 0 ? 'left' : 'right';
+            if (ancestorCanScrollHorizontally(s.target, direction, e.currentTarget as Element)) {
+              drawerDragRef.current = null;
+              return;
+            }
+            // Only leftward drags open the drawer
+            if (dx >= 0) {
+              drawerDragRef.current = null;
+              return;
+            }
+            s.committed = true;
+          }
+          // Clamp: panel offscreen at panelWidth, fully visible at 0
+          const offset = Math.max(0, Math.min(s.panelWidth, s.panelWidth + dx));
+          setDrawerDragX(offset);
+        }}
+        onTouchEnd={(e) => {
+          const s = drawerDragRef.current;
+          if (!s) return;
+          drawerDragRef.current = null;
+          if (!s.committed) { setDrawerDragX(null); return; }
+          const t = e.changedTouches[0];
+          const dx = t.clientX - s.startX;
+          const elapsed = Math.max(1, Date.now() - s.startTime);
+          const velocity = -dx / elapsed; // px/ms, positive if leftward
+          const shouldOpen = -dx > s.panelWidth * 0.35 || velocity > 0.5;
+          const current = Math.max(0, Math.min(s.panelWidth, s.panelWidth + dx));
+          const target = shouldOpen ? 0 : s.panelWidth;
+          drawerAnimCancelRef.current = animateValue(
+            current,
+            target,
+            200,
+            (v) => setDrawerDragX(v),
+            () => {
+              drawerAnimCancelRef.current = null;
+              setDrawerDragX(null);
+              if (shouldOpen) setShowFileBrowser(true);
+            }
+          );
+        }}
+      >
         <LogViewer
               messages={chatMessages}
               loading={(!!pendingPrompt && !pendingFailed) || jobActive}
@@ -748,8 +919,24 @@ export function ProjectDetail({ id }: Props) {
               projectId={id}
               onRetry={pendingFailed ? handleRetry : undefined}
               onDiscard={pendingFailed ? handleDiscard : undefined}
+              onFileClick={(p) => setPreviewPath(p)}
             />
       </div>
+      {id && (showFileBrowser || drawerDragX !== null) && (
+        <FileBrowser
+          projectId={id}
+          open={showFileBrowser}
+          dragOffset={drawerDragX}
+          onClose={() => setShowFileBrowser(false)}
+        />
+      )}
+      {id && previewPath && (
+        <FilePreviewSheet
+          projectId={id}
+          filePath={previewPath}
+          onClose={() => setPreviewPath(null)}
+        />
+      )}
       <PromptInput
         projectId={id}
         onSubmit={handleRun}

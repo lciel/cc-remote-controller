@@ -14,7 +14,7 @@ import xml from 'highlight.js/lib/languages/xml';
 import python from 'highlight.js/lib/languages/python';
 import yaml from 'highlight.js/lib/languages/yaml';
 import markdown from 'highlight.js/lib/languages/markdown';
-import 'highlight.js/styles/github-dark.min.css';
+import 'highlight.js/styles/github.min.css';
 
 hljs.registerLanguage('bash', bash);
 hljs.registerLanguage('typescript', typescript);
@@ -79,6 +79,18 @@ interface Props {
   projectId?: string;
   onRetry?: () => void;
   onDiscard?: () => void;
+  onFileClick?: (path: string) => void;
+}
+
+// File path pattern: has extension, path-safe chars only, not too long
+const FILE_REF_RE = /^[a-zA-Z0-9_.\-/]+\.[a-zA-Z0-9]{1,8}$/;
+
+function looksLikeFilePath(text: string): boolean {
+  if (!text || text.length > 200 || text.length < 3) return false;
+  if (!FILE_REF_RE.test(text)) return false;
+  // Avoid matching things like "3.14" or "1.2.3"
+  if (/^\d+(\.\d+)*$/.test(text)) return false;
+  return true;
 }
 
 // Configure marked for compact output
@@ -96,7 +108,7 @@ function getPreview(detail: string): string {
 
 const STATUS_TOOLS = new Set(['EnterPlanMode', 'ExitPlanMode', 'EnterWorktree', 'ExitWorktree', 'TaskOutput', 'TaskStop', 'CronList']);
 
-function renderDiff(detail: string) {
+function renderDiff(detail: string, onFileClick?: (path: string) => void) {
   const lines = detail.split('\n');
   const filePath = lines[0];
   const diffLines = lines.slice(1);
@@ -113,9 +125,13 @@ function renderDiff(detail: string) {
     return { cls: isDel ? 'diff-del' : 'diff-add', prefix, html };
   });
 
+  const headerClickable = !!(onFileClick && filePath);
   return (
     <div class="tool-diff">
-      <div class="diff-header">{filePath}</div>
+      <div
+        class={`diff-header${headerClickable ? ' file-ref' : ''}`}
+        data-file-ref={headerClickable ? filePath : undefined}
+      >{filePath}</div>
       <div class="diff-body">
         {highlighted.map((h, i) => (
           <div key={i} class={`diff-line ${h.cls}`}>
@@ -315,7 +331,12 @@ function tryParseStructuredResult(text: string): string | null {
 }
 
 function renderToolResult(result: string, toolName: string, filePath?: string) {
-  // Try structured content (Agent results)
+  // Agent results: render as markdown
+  if (toolName === 'Agent') {
+    const html = renderMarkdown(result);
+    return <div class="tool-result-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
+  }
+  // Try structured content (legacy fallback for pre-parsed JSON arrays)
   const structured = tryParseStructuredResult(result);
   if (structured) {
     const html = renderMarkdown(structured);
@@ -328,7 +349,7 @@ function renderToolResult(result: string, toolName: string, filePath?: string) {
   return <pre class="tool-result-content">{result}</pre>;
 }
 
-function ToolBlockView({ block, projectId }: { block: ToolBlock; projectId?: string }) {
+function ToolBlockView({ block, projectId, onFileClick }: { block: ToolBlock; projectId?: string; onFileClick?: (path: string) => void }) {
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const fetched = useRef(false);
@@ -348,7 +369,11 @@ function ToolBlockView({ block, projectId }: { block: ToolBlock; projectId?: str
   const filePath = (block.name === 'Read' || block.name === 'Write') ? block.detail.trim() : undefined;
 
   const renderDetail = () => {
-    if (block.name === 'Edit') return renderDiff(block.detail);
+    if (block.name === 'Edit') return renderDiff(block.detail, onFileClick);
+    if ((block.name === 'Read' || block.name === 'Write') && onFileClick) {
+      const p = typeof block.input?.file_path === 'string' ? block.input.file_path : block.detail.trim();
+      if (p) return <pre class="tool-detail file-ref" data-file-ref={p}>{block.detail}</pre>;
+    }
     if (block.name === 'Bash') {
       const html = highlightCode(block.detail, 'bash');
       return <pre class="tool-detail" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -386,7 +411,7 @@ function ToolBlockView({ block, projectId }: { block: ToolBlock; projectId?: str
   );
 }
 
-function renderBlock(block: ContentBlock, key: number, projectId?: string) {
+function renderBlock(block: ContentBlock, key: number, projectId?: string, onFileClick?: (path: string) => void) {
   if (block.type === 'text') {
     const html = renderMarkdown(block.text);
     return <div key={key} class="chat-content" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -401,7 +426,7 @@ function renderBlock(block: ContentBlock, key: number, projectId?: string) {
   if (STATUS_TOOLS.has(block.name)) {
     return <div key={key} class="tool-status">{block.detail}</div>;
   }
-  return <ToolBlockView key={key} block={block} projectId={projectId} />;
+  return <ToolBlockView key={key} block={block} projectId={projectId} onFileClick={onFileClick} />;
 }
 
 function getLatestPreview(messages: ChatMessage[]): { role: 'user' | 'assistant'; text: string } {
@@ -429,7 +454,7 @@ function countBlocks(messages: ChatMessage[]): number {
   return n;
 }
 
-export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry, onDiscard }: Props) {
+export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry, onDiscard, onFileClick }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
   const userInteracting = useRef(false);
@@ -556,12 +581,74 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
 
   const latest = (hasNewMessages || newMsgState === 'exiting') ? getLatestPreview(messages) : null;
 
-  // Inject copy buttons into <pre> blocks after render
+  // Mark inline <code> elements that look like file paths as clickable,
+  // but only if the file actually exists in the project.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !onFileClick || !projectId) return;
+
+    // Collect candidate paths from inline <code> elements we haven't processed yet
+    const candidates = new Map<string, HTMLElement[]>();
+    el.querySelectorAll('code:not([data-file-ref-checked])').forEach(code => {
+      if (code.closest('pre')) return;
+      const text = (code.textContent || '').trim();
+      if (!looksLikeFilePath(text)) {
+        code.setAttribute('data-file-ref-checked', '1');
+        return;
+      }
+      if (!candidates.has(text)) candidates.set(text, []);
+      candidates.get(text)!.push(code as HTMLElement);
+    });
+
+    if (candidates.size === 0) return;
+
+    const paths = Array.from(candidates.keys());
+    let cancelled = false;
+    api.checkFilesExist(projectId, paths).then(({ results }) => {
+      if (cancelled) return;
+      for (const [path, elements] of candidates) {
+        for (const code of elements) {
+          code.setAttribute('data-file-ref-checked', '1');
+          if (results[path]) {
+            code.setAttribute('data-file-ref', path);
+            code.classList.add('file-ref');
+          }
+        }
+      }
+    }).catch(() => { /* ignore */ });
+
+    return () => { cancelled = true; };
+  }, [messages, onFileClick, projectId]);
+
+  // Delegate click on file-ref elements
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !onFileClick) return;
+    const handler = (e: Event) => {
+      const target = e.target as HTMLElement;
+      const ref = target.closest('[data-file-ref]') as HTMLElement | null;
+      if (!ref) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const path = ref.getAttribute('data-file-ref');
+      if (path) onFileClick(path);
+    };
+    el.addEventListener('click', handler);
+    return () => el.removeEventListener('click', handler);
+  }, [onFileClick]);
+
+  // Inject copy buttons next to <pre> blocks after render
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     el.querySelectorAll('pre:not([data-copy-btn])').forEach(pre => {
       pre.setAttribute('data-copy-btn', '1');
+      // Wrap <pre> in a positioning container so the button doesn't
+      // scroll horizontally with the code content.
+      const wrapper = document.createElement('div');
+      wrapper.className = 'code-block-wrapper';
+      pre.parentNode?.insertBefore(wrapper, pre);
+      wrapper.appendChild(pre);
       const btn = document.createElement('button');
       btn.className = 'code-copy-btn';
       btn.textContent = 'Copy';
@@ -573,8 +660,7 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
           setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
         });
       });
-      (pre as HTMLElement).style.position = 'relative';
-      pre.appendChild(btn);
+      wrapper.appendChild(btn);
     });
   }, [messages]);
 
@@ -608,7 +694,7 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
               </svg>
             )}
           </div>
-          {msg.content.map((block, j) => renderBlock(block, j, projectId))}
+          {msg.content.map((block, j) => renderBlock(block, j, projectId, onFileClick))}
           {msg.status === 'failed' && (
             <div class="msg-failed-bar">
               <span class="msg-failed-label">送信失敗</span>

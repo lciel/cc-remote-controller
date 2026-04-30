@@ -36,4 +36,11 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS project_analyses (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  summary TEXT NOT NULL DEFAULT '',
+  analyzed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  change_hash TEXT NOT NULL DEFAULT ''
+);
 `;

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'preact/hooks';
 import Router from 'preact-router';
 import { ProjectList } from './components/ProjectList';
 import { ProjectDetail } from './components/ProjectDetail';
+import { AnalyticsView } from './components/AnalyticsView';
 import { OfflineScreen } from './components/OfflineScreen';
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
       <Router>
         <ProjectList path="/" onPreviewOffline={() => setOffline(true)} />
         <ProjectDetail path="/projects/:id" />
+        <AnalyticsView path="/analytics" />
       </Router>
     </div>
   );

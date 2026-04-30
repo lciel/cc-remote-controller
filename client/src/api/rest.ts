@@ -63,12 +63,17 @@ export const api = {
 
   discoverProjects: () => request<DiscoveredProject[]>('/api/projects/discover'),
 
+  browseDirectories: (dirPath?: string) =>
+    request<{ current: string; dirs: { name: string; path: string }[] }>(
+      `/api/projects/browse${dirPath ? `?path=${encodeURIComponent(dirPath)}` : ''}`
+    ),
+
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
 
-  createProject: (name: string, repoPath: string) =>
+  createProject: (name: string, repoPath: string, createDir?: boolean) =>
     request<Project>('/api/projects', {
       method: 'POST',
-      body: JSON.stringify({ name, repoPath }),
+      body: JSON.stringify({ name, repoPath, createDir }),
     }),
 
   runJob: (projectId: string, prompt: string, images?: ImageAttachment[]) =>
@@ -106,6 +111,22 @@ export const api = {
   getGitBranch: (projectId: string) =>
     request<{ branch: string | null }>(`/api/projects/${projectId}/git-branch`),
 
+  listFiles: (projectId: string, relPath?: string) =>
+    request<{ current: string; items: FileItem[] }>(
+      `/api/projects/${projectId}/files${relPath ? `?path=${encodeURIComponent(relPath)}` : ''}`
+    ),
+
+  readFile: (projectId: string, relPath: string) =>
+    request<{ path: string; size: number; binary: boolean; content: string | null }>(
+      `/api/projects/${projectId}/file?path=${encodeURIComponent(relPath)}`
+    ),
+
+  checkFilesExist: (projectId: string, paths: string[]) =>
+    request<{ results: Record<string, boolean> }>(`/api/projects/${projectId}/files-exist`, {
+      method: 'POST',
+      body: JSON.stringify({ paths }),
+    }),
+
   getToolResult: (projectId: string, toolUseId: string) =>
     request<{ result: string | null }>(`/api/projects/${projectId}/tool-result/${toolUseId}`),
 
@@ -128,7 +149,34 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+
+  getAnalyses: () =>
+    request<AnalysisStatus[]>('/api/analyses'),
+
+  runAnalysis: (projectId: string) =>
+    request<{ status: string }>(`/api/analyses/${projectId}/run`, { method: 'POST' }),
+
+  runAllAnalyses: () =>
+    request<{ status: string; count: number }>('/api/analyses/run-all', { method: 'POST' }),
 };
+
+export interface FileItem {
+  name: string;
+  type: 'dir' | 'file';
+  size: number;
+  mtime: number;
+  path: string;
+}
+
+export interface AnalysisStatus {
+  projectId: string;
+  projectName: string;
+  repoPath: string;
+  state: 'idle' | 'running' | 'done' | 'error';
+  summary?: string;
+  analyzed_at?: string;
+  stale?: boolean;
+}
 
 export interface ImageAttachment {
   data: string;       // base64-encoded

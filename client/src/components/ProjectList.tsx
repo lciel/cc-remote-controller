@@ -21,6 +21,7 @@ export function ProjectList({ onPreviewOffline }: Props) {
   const [name, setName] = useState('');
   const [repoPath, setRepoPath] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createDir, setCreateDir] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [tokenInput, setTokenInput] = useState(
     localStorage.getItem('cc-auth-token') || ''
@@ -54,7 +55,25 @@ export function ProjectList({ onPreviewOffline }: Props) {
   // Discovery state
   const [discovered, setDiscovered] = useState<DiscoveredProject[]>([]);
   const [loadingDiscover, setLoadingDiscover] = useState(false);
-  const [inputMode, setInputMode] = useState<'select' | 'manual'>('select');
+  const [inputMode, setInputMode] = useState<'select' | 'manual' | 'new'>('select');
+
+  // Directory browser state for "new" mode
+  const [browsePath, setBrowsePath] = useState('');
+  const [browseDirs, setBrowseDirs] = useState<{ name: string; path: string }[]>([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [newDirName, setNewDirName] = useState('');
+
+  const loadBrowse = (dirPath?: string) => {
+    setBrowseLoading(true);
+    api.browseDirectories(dirPath).then((res) => {
+      setBrowsePath(res.current);
+      setBrowseDirs(res.dirs);
+    }).catch(() => {
+      setBrowseDirs([]);
+    }).finally(() => {
+      setBrowseLoading(false);
+    });
+  };
 
   useEffect(() => {
     if (showCreate) {
@@ -70,6 +89,9 @@ export function ProjectList({ onPreviewOffline }: Props) {
     } else {
       setDiscovered([]);
       setInputMode('select');
+      setBrowsePath('');
+      setBrowseDirs([]);
+      setNewDirName('');
     }
   }, [showCreate]);
 
@@ -77,9 +99,10 @@ export function ProjectList({ onPreviewOffline }: Props) {
     if (!name || !repoPath) return;
     setCreating(true);
     try {
-      await api.createProject(name, repoPath);
+      await api.createProject(name, repoPath, createDir || undefined);
       setName('');
       setRepoPath('');
+      setCreateDir(false);
       setShowCreate(false);
       refresh();
     } catch {
@@ -93,6 +116,24 @@ export function ProjectList({ onPreviewOffline }: Props) {
     setName(dp.name);
     setRepoPath(dp.path);
     setInputMode('manual');
+  };
+
+  const handleCreateFromBrowser = async () => {
+    if (!browsePath || !newDirName.trim()) return;
+    const fullPath = browsePath + '/' + newDirName.trim();
+    const projectName = newDirName.trim();
+    setCreating(true);
+    try {
+      await api.createProject(projectName, fullPath, true);
+      setNewDirName('');
+      setBrowsePath('');
+      setShowCreate(false);
+      refresh();
+    } catch {
+      alert('Failed to create project');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleSaveToken = () => {
@@ -165,6 +206,13 @@ export function ProjectList({ onPreviewOffline }: Props) {
               </svg>
             </button>
           )}
+          <a href="/analytics" class="btn-icon header-circle-btn" aria-label="Analytics">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="20" x2="18" y2="10" />
+              <line x1="12" y1="20" x2="12" y2="4" />
+              <line x1="6" y1="20" x2="6" y2="14" />
+            </svg>
+          </a>
           <button class="btn-icon header-circle-btn" onClick={() => { setShowSettings(!showSettings); setShowCreate(false); }} aria-label="Settings">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3" />
@@ -266,22 +314,28 @@ export function ProjectList({ onPreviewOffline }: Props) {
             {showCreate ? (
               <div class="card" style={{ marginTop: '4px' }}>
                 {/* Tab buttons */}
-                {discovered.length > 0 && (
-                  <div class="discover-tabs">
+                <div class="discover-tabs">
+                  {discovered.length > 0 && (
                     <button
                       class={`btn btn-sm ${inputMode === 'select' ? 'btn-tab-active' : ''}`}
                       onClick={() => setInputMode('select')}
                     >
                       Select
                     </button>
-                    <button
-                      class={`btn btn-sm ${inputMode === 'manual' ? 'btn-tab-active' : ''}`}
-                      onClick={() => setInputMode('manual')}
-                    >
-                      Manual
-                    </button>
-                  </div>
-                )}
+                  )}
+                  <button
+                    class={`btn btn-sm ${inputMode === 'manual' ? 'btn-tab-active' : ''}`}
+                    onClick={() => setInputMode('manual')}
+                  >
+                    Manual
+                  </button>
+                  <button
+                    class={`btn btn-sm ${inputMode === 'new' ? 'btn-tab-active' : ''}`}
+                    onClick={() => { setInputMode('new'); if (!browsePath) loadBrowse(); }}
+                  >
+                    New
+                  </button>
+                </div>
 
                 {inputMode === 'select' ? (
                   // Discovery list
@@ -312,6 +366,70 @@ export function ProjectList({ onPreviewOffline }: Props) {
                       Cancel
                     </button>
                   </div>
+                ) : inputMode === 'new' ? (
+                  // Directory browser
+                  <div>
+                    {browsePath && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                        <button
+                          class="btn btn-sm"
+                          onClick={() => loadBrowse(browsePath.substring(0, browsePath.lastIndexOf('/')) || undefined)}
+                          style={{ padding: '2px 8px', minWidth: 0 }}
+                        >
+                          ..
+                        </button>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {browsePath}
+                        </span>
+                      </div>
+                    )}
+                    {browseLoading ? (
+                      <div class="loading">Loading...</div>
+                    ) : (
+                      <div class="discover-list" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                        {browseDirs.map((d) => (
+                          <button
+                            key={d.path}
+                            class="discover-item"
+                            onClick={() => loadBrowse(d.path)}
+                          >
+                            <div class="discover-item-name">{d.name}/</div>
+                          </button>
+                        ))}
+                        {browseDirs.length === 0 && (
+                          <div class="empty" style={{ padding: '8px 0' }}>No subdirectories</div>
+                        )}
+                      </div>
+                    )}
+                    {browsePath && (
+                      <div style={{ marginTop: '8px' }}>
+                        <label class="label">New folder name</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            class="input"
+                            value={newDirName}
+                            onInput={(e) => setNewDirName((e.target as HTMLInputElement).value)}
+                            placeholder="my-new-project"
+                            style={{ flex: 1 }}
+                          />
+                          <button
+                            class="btn btn-primary"
+                            onClick={handleCreateFromBrowser}
+                            disabled={creating || !newDirName.trim()}
+                          >
+                            {creating ? '...' : 'Create'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      class="btn"
+                      style={{ width: '100%', marginTop: '8px' }}
+                      onClick={handleCloseCreate}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 ) : (
                   // Manual input form
                   <div>
@@ -329,6 +447,14 @@ export function ProjectList({ onPreviewOffline }: Props) {
                       onInput={(e) => setRepoPath((e.target as HTMLInputElement).value)}
                       placeholder="/home/user/project"
                     />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', fontSize: '0.85rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={createDir}
+                        onChange={(e) => setCreateDir((e.target as HTMLInputElement).checked)}
+                      />
+                      Create directory if it doesn't exist
+                    </label>
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                       <button
                         class="btn btn-primary"
