@@ -6,7 +6,8 @@ const UPLOAD_DIR = '/tmp/cc-uploads';
 
 export interface ImageAttachment {
   data: string;       // base64-encoded
-  mediaType: string;  // e.g. "image/png"
+  mediaType: string;  // e.g. "image/png" or "application/pdf"
+  filename?: string;  // original filename (used for extension when mediaType is unknown)
 }
 
 function ensureDir(): void {
@@ -15,7 +16,7 @@ function ensureDir(): void {
   }
 }
 
-function extFromMediaType(mediaType: string): string {
+function extFromMediaType(mediaType: string): string | null {
   const map: Record<string, string> = {
     'image/png': '.png',
     'image/jpeg': '.jpg',
@@ -24,14 +25,24 @@ function extFromMediaType(mediaType: string): string {
     'image/webp': '.webp',
     'image/svg+xml': '.svg',
   };
-  return map[mediaType] || '.png';
+  return map[mediaType] || null;
+}
+
+function pickExtension(att: ImageAttachment): string {
+  // Prefer the original filename's extension when present (path.basename guards against traversal).
+  if (att.filename) {
+    const safe = path.basename(att.filename);
+    const ext = path.extname(safe).toLowerCase();
+    if (ext && /^\.[a-z0-9]{1,16}$/.test(ext)) return ext;
+  }
+  return extFromMediaType(att.mediaType) || '.bin';
 }
 
 export function saveImages(images: ImageAttachment[]): string[] {
   ensureDir();
   const paths: string[] = [];
   for (const img of images) {
-    const ext = extFromMediaType(img.mediaType);
+    const ext = pickExtension(img);
     const filename = `${crypto.randomUUID()}${ext}`;
     const filePath = path.join(UPLOAD_DIR, filename);
     fs.writeFileSync(filePath, Buffer.from(img.data, 'base64'));

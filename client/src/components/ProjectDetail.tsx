@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import { route } from 'preact-router';
-import { api, Project, ClaudeHistoryMessage, ContextUsage, ImageAttachment } from '../api/rest';
+import { api, Project, ClaudeHistoryMessage, ContextUsage, ImageAttachment, TeamSnapshot, TeamMember } from '../api/rest';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { LogViewer, ChatMessage, ContentBlock, ErrorBlock } from './LogViewer';
@@ -10,6 +10,8 @@ import { ConversationSwitcher } from './ConversationSwitcher';
 import { BottomSheet } from './BottomSheet';
 import { FileBrowser, invalidateFileListCache } from './FileBrowser';
 import { FilePreviewSheet } from './FilePreviewSheet';
+import { TeamPanel } from './TeamPanel';
+import { TeamMemberSheet } from './TeamMemberSheet';
 import { useDriveMode } from '../hooks/useDriveMode';
 
 interface Props {
@@ -398,6 +400,30 @@ export function ProjectDetail({ id }: Props) {
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const contextLimitRef = useRef(200000);
+  const [team, setTeam] = useState<TeamSnapshot | null>(null);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
+
+  const refreshTeam = useCallback(() => {
+    if (!id) return;
+    setTeamLoading(true);
+    api.getTeam(id).then((res) => {
+      setTeam(res.team);
+    }).catch(() => {
+      setTeam(null);
+    }).finally(() => {
+      setTeamLoading(false);
+    });
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || !project) return;
+    if (project.team_mode) {
+      refreshTeam();
+    } else {
+      setTeam(null);
+    }
+  }, [id, project?.team_mode, project?.claude_session_id, refreshTeam]);
 
   const loadHistory = useCallback(async (proj: Project) => {
     if (proj.claude_session_id) {
@@ -492,6 +518,8 @@ export function ProjectDetail({ id }: Props) {
           payload_json: JSON.stringify(data),
         },
       ]);
+    } else if (m.type === 'team_update') {
+      refreshTeam();
     } else if (m.type === 'job_finished') {
       if (failedPromptKey) localStorage.removeItem(failedPromptKey);
       setPendingFailed(false);
@@ -812,6 +840,30 @@ export function ProjectDetail({ id }: Props) {
               )}
             </div>
             <div style={{ marginTop: '16px' }}>
+              <label class="team-mode-toggle">
+                <span class="team-mode-toggle-text">
+                  <span class="team-mode-toggle-label">Team モード</span>
+                  <span class="team-mode-toggle-desc">
+                    永続オーケストレータでチームを保持します（off にすると team は破棄）
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={!!project.team_mode}
+                  onChange={async (e) => {
+                    const next = (e.currentTarget as HTMLInputElement).checked;
+                    try {
+                      const updated = await api.updateProject(project.id, { teamMode: next });
+                      setProject(updated);
+                    } catch {
+                      alert('Failed to update team mode');
+                    }
+                  }}
+                />
+                <span class="team-mode-toggle-switch" aria-hidden="true" />
+              </label>
+            </div>
+            <div style={{ marginTop: '16px' }}>
               {confirmDelete ? (
                 <div>
                   <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
@@ -937,6 +989,20 @@ export function ProjectDetail({ id }: Props) {
           onClose={() => setPreviewPath(null)}
         />
       )}
+      {id && team && selectedMember && (
+        <TeamMemberSheet
+          projectId={id}
+          team={team}
+          member={team.members.find((m) => m.name === selectedMember.name) || selectedMember}
+          onClose={() => setSelectedMember(null)}
+        />
+      )}
+      <TeamPanel
+        team={team}
+        loading={teamLoading}
+        onMemberClick={(m) => setSelectedMember(m)}
+        variant="floating"
+      />
       <PromptInput
         projectId={id}
         onSubmit={handleRun}
@@ -971,6 +1037,7 @@ export function ProjectDetail({ id }: Props) {
       )}
 
       <aside class={`detail-sidebar context-${ctxLevel}`}>
+        <div class="sidebar-card">
         <div class="sidebar-item">
           <svg class="sidebar-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
@@ -1032,6 +1099,13 @@ export function ProjectDetail({ id }: Props) {
             <span class="sidebar-label">{gitBranch}</span>
           </div>
         )}
+        </div>
+        <TeamPanel
+          team={team}
+          loading={teamLoading}
+          onMemberClick={(m) => setSelectedMember(m)}
+          variant="sidebar"
+        />
       </aside>
     </div>
   );

@@ -10,6 +10,8 @@ import { initDb, closeDb } from './db/index.js';
 import { setupWebSocket } from './ws/handler.js';
 import { cleanupAll } from './services/jobService.js';
 import { cleanupUploadDir } from './services/imageStore.js';
+import * as teamWatcher from './services/teamWatcher.js';
+import * as persistentOrchestrator from './services/persistentOrchestrator.js';
 
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces();
@@ -29,6 +31,11 @@ initDb();
 // Clean up any leftover temp images from previous runs
 cleanupUploadDir();
 
+// SIGTERM any orphan persistent orchestrators left over from a prior server
+// instance (e.g. after kill -9). Lets Claude's own graceful shutdown clean
+// up team config so the next ensure() spawns into a fresh state.
+persistentOrchestrator.cleanupOrphans();
+
 // Create HTTP(S) server
 const server = config.ssl
   ? createHttpsServer({
@@ -42,6 +49,9 @@ const wsProtocol = config.ssl ? 'wss' : 'ws';
 // Create WebSocket server on the same HTTP server
 const wss = new WebSocketServer({ server, path: '/ws' });
 setupWebSocket(wss);
+
+// Start polling team inbox files for active team-mode projects
+teamWatcher.start();
 
 // Start listening
 server.listen(config.port, '0.0.0.0', () => {
@@ -76,6 +86,7 @@ server.listen(config.port, '0.0.0.0', () => {
 // Graceful shutdown
 function shutdown() {
   console.log('\nShutting down...');
+  teamWatcher.stop();
   cleanupAll();
   closeDb();
   // Close all WebSocket connections so server.close() can complete

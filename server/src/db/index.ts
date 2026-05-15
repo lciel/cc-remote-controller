@@ -29,6 +29,9 @@ export function initDb(): void {
   if (!colNames.has('model')) {
     database.exec("ALTER TABLE projects ADD COLUMN model TEXT");
   }
+  if (!colNames.has('team_mode')) {
+    database.exec("ALTER TABLE projects ADD COLUMN team_mode INTEGER NOT NULL DEFAULT 0");
+  }
 
   // Reset stale states from unclean shutdown
   database.prepare("UPDATE projects SET state = 'IDLE' WHERE state IN ('RUNNING', 'STOPPING')").run();

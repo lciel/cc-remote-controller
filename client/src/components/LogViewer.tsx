@@ -411,10 +411,120 @@ function ToolBlockView({ block, projectId, onFileClick }: { block: ToolBlock; pr
   );
 }
 
+const TEAMMATE_MSG_RE = /<teammate-message\s+teammate_id="([^"]+)"(?:\s+color="([^"]+)")?\s*>([\s\S]*?)<\/teammate-message>/g;
+
+type TextSegment = { type: 'text'; text: string };
+type TeammateSegment = { type: 'teammate'; id: string; color: string; content: string };
+
+function splitTeammateMessages(text: string): Array<TextSegment | TeammateSegment> {
+  const result: Array<TextSegment | TeammateSegment> = [];
+  let lastEnd = 0;
+  TEAMMATE_MSG_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TEAMMATE_MSG_RE.exec(text))) {
+    if (m.index > lastEnd) {
+      result.push({ type: 'text', text: text.slice(lastEnd, m.index) });
+    }
+    result.push({ type: 'teammate', id: m[1], color: m[2] || 'blue', content: m[3].trim() });
+    lastEnd = m.index + m[0].length;
+  }
+  if (lastEnd < text.length) {
+    result.push({ type: 'text', text: text.slice(lastEnd) });
+  }
+  return result;
+}
+
+function previewText(text: string, max = 60): string {
+  const stripped = text.replace(/\s+/g, ' ').trim();
+  return stripped.length > max ? stripped.slice(0, max) + '…' : stripped;
+}
+
+function renderTeammateSegment(seg: TeammateSegment, key: number) {
+  const trimmed = seg.content.trim();
+  let systemType: string | null = null;
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === 'object' && typeof obj.type === 'string') {
+        systemType = obj.type;
+      }
+    } catch { /* not JSON */ }
+  }
+  if (systemType) {
+    const label = systemType === 'idle_notification' ? 'idle' : systemType.replace(/_/g, ' ');
+    return (
+      <div key={key} class={`teammate-msg teammate-msg-system-row teammate-color-${seg.color}`}>
+        <span class="teammate-msg-name">{seg.id}</span>
+        <span class="teammate-msg-system">· {label}</span>
+      </div>
+    );
+  }
+  const html = renderMarkdown(trimmed);
+  const preview = previewText(trimmed);
+  return (
+    <details key={key} class={`teammate-msg teammate-color-${seg.color}`}>
+      <summary class="teammate-msg-summary">
+        <svg
+          class="teammate-msg-icon"
+          viewBox="0 0 24 24"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+        <span class="teammate-msg-name">{seg.id}</span>
+        <span class="teammate-msg-preview">{preview}</span>
+        <svg
+          class="teammate-msg-chevron"
+          viewBox="0 0 24 24"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </summary>
+      <div class="teammate-msg-body" dangerouslySetInnerHTML={{ __html: html }} />
+    </details>
+  );
+}
+
 function renderBlock(block: ContentBlock, key: number, projectId?: string, onFileClick?: (path: string) => void) {
   if (block.type === 'text') {
-    const html = renderMarkdown(block.text);
-    return <div key={key} class="chat-content" dangerouslySetInnerHTML={{ __html: html }} />;
+    const segments = splitTeammateMessages(block.text);
+    if (segments.length === 1 && segments[0].type === 'text') {
+      const html = renderMarkdown(block.text);
+      return <div key={key} class="chat-content" dangerouslySetInnerHTML={{ __html: html }} />;
+    }
+    return (
+      <div key={key} class="chat-content-mixed">
+        {segments.map((seg, i) => {
+          if (seg.type === 'teammate') return renderTeammateSegment(seg, i);
+          if (!seg.text.trim()) return null;
+          return (
+            <div
+              key={i}
+              class="chat-content"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.text) }}
+            />
+          );
+        })}
+      </div>
+    );
   }
   if (block.type === 'error') {
     return <div key={key} class="chat-error">{block.text}</div>;
@@ -667,8 +777,17 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
   return (
     <div class="log-viewer" ref={containerRef} onScroll={handleScroll}>
       {messages.length === 0 && <div class="log-empty">No messages yet.</div>}
-      {messages.map((msg, i) => (
-        <div key={i} class={`chat-msg chat-${msg.role}`}>
+      {messages.map((msg, i) => {
+        // A "teammate-only" user message is one whose visible content is
+        // just <teammate-message> blocks (e.g. a teammate's reply or an
+        // idle notification). Render it without the user's role icon so
+        // it reads as a standalone teammate utterance, not "you said this".
+        const isTeammateOnly = msg.role === 'user' && msg.content.every((b) =>
+          b.type === 'text' && b.text.replace(/<teammate-message[\s\S]*?<\/teammate-message>/g, '').trim() === ''
+        );
+        return (
+        <div key={i} class={`chat-msg chat-${msg.role}${isTeammateOnly ? ' chat-teammate-only' : ''}`}>
+          {!isTeammateOnly && (
           <div class="chat-role">
             {msg.role === 'user' ? (
               <svg class="chat-role-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -694,6 +813,7 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
               </svg>
             )}
           </div>
+          )}
           {msg.content.map((block, j) => renderBlock(block, j, projectId, onFileClick))}
           {msg.status === 'failed' && (
             <div class="msg-failed-bar">
@@ -716,7 +836,8 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
       {loading && (
         <div class="loading-indicator">
           <span class="loading-dots">
@@ -753,7 +874,7 @@ export function LogViewer({ messages, loading, loadingLabel, projectId, onRetry,
       )}
       {fabState !== 'hidden' && newMsgState === 'hidden' && (
         <button
-          class={`scroll-fab ${fabState === 'exiting' ? 'fab-exit' : ''}`}
+          class={`scroll-fab ${fabState === 'exiting' ? 'fab-exit' : ''}${loading && fabState !== 'exiting' ? ' scroll-fab-running' : ''}`}
           onClick={scrollToBottom}
           onAnimationEnd={handleAnimEnd(setFabState)}
         >

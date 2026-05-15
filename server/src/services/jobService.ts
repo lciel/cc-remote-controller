@@ -6,6 +6,7 @@ import { runClaude } from './claudeRunner.js';
 import { broadcast } from '../ws/handler.js';
 import * as projectService from './projectService.js';
 import { ImageAttachment, saveImages, cleanupImages, cleanupUploadDir } from './imageStore.js';
+import * as persistentOrchestrator from './persistentOrchestrator.js';
 
 // In-memory map of running job processes
 const runningJobs = new Map<string, ChildProcess>();
@@ -29,7 +30,7 @@ export function createJob(projectId: string, prompt: string): Job {
   return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as Job;
 }
 
-function updateJobState(jobId: string, state: JobState, exitCode?: number | null): void {
+export function updateJobState(jobId: string, state: JobState, exitCode?: number | null): void {
   const db = getDb();
   const ended = state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELED'
     ? new Date().toISOString()
@@ -40,7 +41,7 @@ function updateJobState(jobId: string, state: JobState, exitCode?: number | null
   ).run(state, ended, exitCode ?? null, jobId);
 }
 
-function saveEvent(jobId: string, type: string, payload: unknown): void {
+export function saveEvent(jobId: string, type: string, payload: unknown): void {
   const db = getDb();
   db.prepare(
     `INSERT INTO events (job_id, ts, type, payload_json) VALUES (?, ?, ?, ?)`
@@ -123,12 +124,12 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
   const job = createJob(projectId, prompt);
   const jobId = job.id;
 
-  // Save images to temp files and append paths to prompt
+  // Save attachments (images / arbitrary files) to temp files and append paths to prompt
   let finalPrompt = prompt;
   if (images && images.length > 0) {
     const paths = saveImages(images);
     jobImagePaths.set(jobId, paths);
-    finalPrompt += '\n\n[Attached images - use Read tool to view:]\n' + paths.join('\n');
+    finalPrompt += '\n\n[Attached files - use Read tool to view:]\n' + paths.join('\n');
   }
 
   // Update project state
@@ -140,6 +141,20 @@ export function startJob(projectId: string, repoPath: string, prompt: string, im
 
   // Update job to RUNNING
   updateJobState(jobId, 'RUNNING');
+
+  if (project && project.team_mode) {
+    try {
+      persistentOrchestrator.ensure(projectId, repoPath, model ?? null, project.claude_session_id);
+      persistentOrchestrator.sendUserMessage(projectId, finalPrompt, jobId);
+    } catch (err) {
+      saveEvent(jobId, 'error', { error: (err as Error).message });
+      updateJobState(jobId, 'FAILED');
+      projectService.updateProjectState(projectId, 'ERROR');
+      broadcast(projectId, { type: 'job_finished', projectId, jobId, state: 'FAILED' });
+      broadcast(projectId, { type: 'project_state', projectId, state: 'ERROR' });
+    }
+    return jobId;
+  }
 
   try {
     const child = runClaude({
@@ -245,6 +260,14 @@ export function cancelJob(jobId: string): boolean {
         child.kill('SIGKILL');
       }
     }, 5000);
+  } else if (persistentOrchestrator.isRunning(job.project_id)) {
+    projectService.updateProjectState(job.project_id, 'STOPPING');
+    broadcast(job.project_id, {
+      type: 'project_state',
+      projectId: job.project_id,
+      state: 'STOPPING',
+    });
+    persistentOrchestrator.stop(job.project_id);
   }
 
   cleanupJobResources(jobId);
@@ -262,4 +285,5 @@ export function cleanupAll(): void {
     child.kill('SIGTERM');
     runningJobs.delete(jobId);
   }
+  persistentOrchestrator.shutdownAll();
 }

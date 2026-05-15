@@ -4,9 +4,9 @@ import { ContextUsage } from '../api/rest';
 export function contextLevel(used: number, limit: number): 'normal' | 'warning' | 'danger' {
   const pct = used / limit;
   if (limit >= 500000) {
-    // 1M context: warn at 20% (200k), danger at 50% (500k)
-    if (pct >= 0.5) return 'danger';
-    if (pct >= 0.2) return 'warning';
+    // 1M context: warn at 40% (400k), danger at 70% (700k)
+    if (pct >= 0.7) return 'danger';
+    if (pct >= 0.4) return 'warning';
   } else {
     // 200k context: warn at 55%, danger at 75%
     if (pct >= 0.75) return 'danger';

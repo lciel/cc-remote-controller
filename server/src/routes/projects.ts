@@ -4,6 +4,9 @@ import os from 'os';
 import path from 'path';
 import * as projectService from '../services/projectService.js';
 import * as jobService from '../services/jobService.js';
+import * as persistentOrchestrator from '../services/persistentOrchestrator.js';
+import * as teamRegistry from '../services/teamRegistry.js';
+import * as inboxWriter from '../services/inboxWriter.js';
 import { listConversations, readConversation, getContextUsage, getToolResult, discoverClaudeProjects } from '../services/claudeConversations.js';
 
 const router = Router();
@@ -176,11 +179,22 @@ router.patch('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const { claudeSessionId, model } = req.body;
+  const { claudeSessionId, model, teamMode } = req.body;
   if (claudeSessionId !== undefined) {
     if (claudeSessionId !== null && (typeof claudeSessionId !== 'string' || !isValidUUID(claudeSessionId))) {
       res.status(400).json({ error: 'claudeSessionId must be a valid UUID or null' });
       return;
+    }
+    // A claudeSessionId change means the user switched to (or created) a
+    // different conversation. The currently-running team-mode orchestrator
+    // is bound to the previous session via --resume, so it must be stopped:
+    // otherwise it would keep handling future jobs under the old session
+    // and silently overwrite this PATCH on its next stream-json line. The
+    // next /run will spawn a fresh orchestrator for the new session. The
+    // old team is sacrificed by design — recover via a team-template
+    // rehydrate flow rather than trying to keep multiple orchestrators alive.
+    if (claudeSessionId !== project.claude_session_id && persistentOrchestrator.isRunning(project.id)) {
+      persistentOrchestrator.stop(project.id);
     }
     projectService.updateClaudeSessionId(project.id, claudeSessionId);
   }
@@ -192,8 +206,103 @@ router.patch('/:id', (req: Request, res: Response) => {
     }
     projectService.updateModel(project.id, model);
   }
+  if (teamMode !== undefined) {
+    if (typeof teamMode !== 'boolean') {
+      res.status(400).json({ error: 'teamMode must be a boolean' });
+      return;
+    }
+    projectService.updateTeamMode(project.id, teamMode);
+    if (!teamMode && persistentOrchestrator.isRunning(project.id)) {
+      persistentOrchestrator.stop(project.id);
+    }
+  }
 
   res.json(projectService.getProject(project.id));
+});
+
+// GET /api/projects/:id/team - Return the active team snapshot (members + inboxes) for the project,
+// or { team: null } if the project has no live team.
+router.get('/:id/team', (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  if (!project.team_mode || !project.claude_session_id) {
+    res.json({ team: null });
+    return;
+  }
+  const teamName = teamRegistry.findTeamByLeadSession(project.claude_session_id);
+  if (!teamName) {
+    res.json({ team: null });
+    return;
+  }
+  const snapshot = teamRegistry.readTeamSnapshot(teamName);
+  res.json({ team: snapshot });
+});
+
+const TEAMMATE_NAME_RE = /^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,63}$/;
+const MAX_DM_TEXT_BYTES = 64 * 1024; // 64 KiB
+
+// POST /api/projects/:id/teammates/:name/messages - Send a direct message to a specific teammate.
+// The message is appended to the teammate's inbox file; the running orchestrator (if any) will
+// pick it up on its next polling tick.
+router.post('/:id/teammates/:name/messages', async (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  if (!project.team_mode || !project.claude_session_id) {
+    res.status(409).json({ error: 'Project is not in team mode' });
+    return;
+  }
+  const name = req.params.name;
+  if (!TEAMMATE_NAME_RE.test(name)) {
+    res.status(400).json({ error: 'Invalid teammate name' });
+    return;
+  }
+  const teamName = teamRegistry.findTeamByLeadSession(project.claude_session_id);
+  if (!teamName) {
+    res.status(404).json({ error: 'No active team for this project' });
+    return;
+  }
+  const snapshot = teamRegistry.readTeamSnapshot(teamName);
+  if (!snapshot) {
+    res.status(404).json({ error: 'Team config unreadable' });
+    return;
+  }
+  const member = snapshot.members.find((m) => m.name === name);
+  if (!member) {
+    res.status(404).json({ error: 'Teammate is not a team member' });
+    return;
+  }
+
+  const { text, summary } = req.body ?? {};
+  if (typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+  if (Buffer.byteLength(text, 'utf-8') > MAX_DM_TEXT_BYTES) {
+    res.status(400).json({ error: 'text exceeds maximum size (64 KiB)' });
+    return;
+  }
+  if (summary !== undefined && (typeof summary !== 'string' || summary.length > 200)) {
+    res.status(400).json({ error: 'summary must be a string up to 200 chars' });
+    return;
+  }
+
+  try {
+    const entry = await inboxWriter.appendInboxMessage(teamName, name, {
+      from: 'team-lead',
+      text,
+      summary,
+      color: member.color,
+    });
+    res.status(201).json({ ok: true, message: entry });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 // GET /api/projects/:id/conversations - List Claude conversations for this project's repo

@@ -34,6 +34,7 @@ export interface Project {
   last_job_id: string | null;
   claude_session_id: string | null;
   model: string | null;
+  team_mode: number;
 }
 
 export interface Job {
@@ -93,7 +94,7 @@ export const api = {
   getProjectEvents: (projectId: string) =>
     request<unknown[]>(`/api/projects/${projectId}/events`),
 
-  updateProject: (projectId: string, data: { claudeSessionId?: string | null; model?: string | null }) =>
+  updateProject: (projectId: string, data: { claudeSessionId?: string | null; model?: string | null; teamMode?: boolean }) =>
     request<Project>(`/api/projects/${projectId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -158,7 +159,45 @@ export const api = {
 
   runAllAnalyses: () =>
     request<{ status: string; count: number }>('/api/analyses/run-all', { method: 'POST' }),
+
+  getTeam: (projectId: string) =>
+    request<{ team: TeamSnapshot | null }>(`/api/projects/${projectId}/team`),
+
+  sendTeammateMessage: (projectId: string, name: string, body: { text: string; summary?: string }) =>
+    request<{ ok: true; message: TeamInboxMessage }>(
+      `/api/projects/${projectId}/teammates/${encodeURIComponent(name)}/messages`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
 };
+
+export interface TeamMember {
+  agentId: string;
+  name: string;
+  agentType?: string;
+  model?: string;
+  color?: string;
+  backendType?: string;
+  joinedAt?: number;
+  cwd?: string;
+}
+
+export interface TeamInboxMessage {
+  from: string;
+  text: string;
+  summary?: string;
+  timestamp: string;
+  color?: string;
+  read: boolean;
+}
+
+export interface TeamSnapshot {
+  teamName: string;
+  description?: string;
+  leadSessionId: string;
+  createdAt?: number;
+  members: TeamMember[];
+  inboxes: Record<string, TeamInboxMessage[]>;
+}
 
 export interface FileItem {
   name: string;
@@ -180,7 +219,8 @@ export interface AnalysisStatus {
 
 export interface ImageAttachment {
   data: string;       // base64-encoded
-  mediaType: string;  // e.g. "image/png"
+  mediaType: string;  // e.g. "image/png" or "application/pdf"
+  filename?: string;  // original filename — preferred for extension hint when mediaType is generic
 }
 
 export interface ContextUsage {

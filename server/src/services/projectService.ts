@@ -53,6 +53,13 @@ export function updateModel(id: string, model: string | null): void {
   ).run(model, new Date().toISOString(), id);
 }
 
+export function updateTeamMode(id: string, teamMode: boolean): void {
+  const db = getDb();
+  db.prepare(
+    `UPDATE projects SET team_mode = ?, updated_at = ? WHERE id = ?`
+  ).run(teamMode ? 1 : 0, new Date().toISOString(), id);
+}
+
 export function deleteProject(id: string): boolean {
   const db = getDb();
   db.prepare('DELETE FROM events WHERE job_id IN (SELECT id FROM jobs WHERE project_id = ?)').run(id);

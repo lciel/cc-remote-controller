@@ -1,11 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'preact/hooks';
 import { ImageAttachment } from '../api/rest';
 
-interface ImagePreview {
+interface AttachmentPreview {
   file: File;
-  url: string;     // object URL for preview
-  data: string;    // base64
+  url?: string;       // object URL for image preview only
+  data: string;       // base64
   mediaType: string;
+  filename: string;
+  isImage: boolean;
 }
 
 interface Props {
@@ -24,7 +26,7 @@ function readFileAsBase64(file: File): Promise<string> {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      // Strip "data:image/png;base64," prefix
+      // Strip "data:<mediatype>;base64," prefix
       resolve(result.split(',')[1]);
     };
     reader.onerror = reject;
@@ -36,16 +38,25 @@ function getDraftKey(projectId?: string) {
   return projectId ? `draft:${projectId}` : null;
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 export function PromptInput({ projectId, onSubmit, onCancel, disabled, running, driveSupported, driveActive, onDriveToggle }: Props) {
   const draftKey = getDraftKey(projectId);
   const [value, setValue] = useState(() => {
     if (!draftKey) return '';
     return localStorage.getItem(draftKey) || '';
   });
-  const [images, setImages] = useState<ImagePreview[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachWrapRef = useRef<HTMLDivElement>(null);
 
   const isDesktop = useCallback(() => window.innerWidth >= 768, []);
 
@@ -64,49 +75,64 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running, 
   // Restore textarea height when draft is loaded
   useEffect(() => { if (value) autoResize(); }, []);
 
-  const handleFiles = async (files: FileList) => {
+  const handleFiles = async (files: FileList, mode: 'image' | 'file') => {
     // Copy to Array — FileList is a live reference that gets invalidated when input.value is cleared
     const fileArray = Array.from(files);
-    const newImages: ImagePreview[] = [];
+    const newAttachments: AttachmentPreview[] = [];
     for (const file of fileArray) {
-      if (!file.type.startsWith('image/')) continue;
+      const isImage = file.type.startsWith('image/');
+      // Defensive: image picker is already filtered via accept, but guard anyway
+      if (mode === 'image' && !isImage) continue;
       const data = await readFileAsBase64(file);
-      newImages.push({
+      newAttachments.push({
         file,
-        url: URL.createObjectURL(file),
+        url: isImage ? URL.createObjectURL(file) : undefined,
         data,
-        mediaType: file.type,
+        mediaType: file.type || 'application/octet-stream',
+        filename: file.name,
+        isImage,
       });
     }
-    setImages((prev) => [...prev, ...newImages]);
+    setAttachments((prev) => [...prev, ...newAttachments]);
   };
 
-  const handleFileChange = (e: Event) => {
+  const handleImageInputChange = (e: Event) => {
     const input = e.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
-      handleFiles(input.files);
+      handleFiles(input.files, 'image');
       input.value = '';
     }
   };
 
-  const removeImage = (index: number) => {
-    setImages((prev) => {
-      URL.revokeObjectURL(prev[index].url);
+  const handleFileInputChange = (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      handleFiles(input.files, 'file');
+      input.value = '';
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => {
+      const target = prev[index];
+      if (target?.url) URL.revokeObjectURL(target.url);
       return prev.filter((_, i) => i !== index);
     });
   };
 
   const handleSubmit = () => {
     const trimmed = value.trim();
-    if (!trimmed && images.length === 0) return;
-    const attachments = images.length > 0
-      ? images.map((img) => ({ data: img.data, mediaType: img.mediaType }))
+    if (!trimmed && attachments.length === 0) return;
+    const payload = attachments.length > 0
+      ? attachments.map((a) => ({ data: a.data, mediaType: a.mediaType, filename: a.filename }))
       : undefined;
-    onSubmit(trimmed || '(image attached)', attachments);
+    const allImages = attachments.length > 0 && attachments.every((a) => a.isImage);
+    const fallback = allImages ? '(image attached)' : '(file attached)';
+    onSubmit(trimmed || fallback, payload);
     setValue('');
     if (draftKey) localStorage.removeItem(draftKey);
-    images.forEach((img) => URL.revokeObjectURL(img.url));
-    setImages([]);
+    attachments.forEach((a) => { if (a.url) URL.revokeObjectURL(a.url); });
+    setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
@@ -132,30 +158,80 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running, 
     if (imageFiles.length > 0) {
       e.preventDefault();
       const dt = new DataTransfer();
-      imageFiles.forEach(f => dt.items.add(f));
-      await handleFiles(dt.files);
+      imageFiles.forEach((f) => dt.items.add(f));
+      await handleFiles(dt.files, 'image');
     }
+  };
+
+  // Outside-tap & escape closes the attach menu
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!attachWrapRef.current) return;
+      if (!attachWrapRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    // Defer subscription so the click that opened the menu doesn't immediately close it
+    const t = setTimeout(() => {
+      document.addEventListener('mousedown', onDown);
+      document.addEventListener('keydown', onKey);
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  const onPickImage = () => {
+    setMenuOpen(false);
+    imageInputRef.current?.click();
+  };
+  const onPickFile = () => {
+    setMenuOpen(false);
+    fileInputRef.current?.click();
   };
 
   return (
     <div class="prompt-input-wrapper">
-      {images.length > 0 && (
+      {attachments.length > 0 && (
         <div class="image-previews">
-          {images.map((img, i) => (
-            <div key={i} class="image-preview-item">
-              <img src={img.url} alt="" onClick={() => setLightboxSrc(img.url)} />
-              <button class="image-remove-btn" onClick={() => removeImage(i)}>x</button>
-            </div>
-          ))}
+          {attachments.map((att, i) =>
+            att.isImage && att.url ? (
+              <div key={i} class="image-preview-item">
+                <img src={att.url} alt="" onClick={() => setLightboxSrc(att.url!)} />
+                <button class="image-remove-btn" onClick={() => removeAttachment(i)}>x</button>
+              </div>
+            ) : (
+              <div key={i} class="attachment-chip" title={att.filename}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span class="attachment-chip-name">{att.filename}</span>
+                <span class="attachment-chip-size">{formatBytes(att.file.size)}</span>
+                <button class="image-remove-btn" onClick={() => removeAttachment(i)}>x</button>
+              </div>
+            )
+          )}
         </div>
       )}
       <input
-        ref={fileInputRef}
+        ref={imageInputRef}
         type="file"
         accept="image/*"
         multiple
         style={{ display: 'none' }}
-        onChange={handleFileChange}
+        onChange={handleImageInputChange}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleFileInputChange}
       />
       <textarea
         ref={textareaRef}
@@ -173,13 +249,36 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running, 
         rows={1}
       />
       <div class="prompt-input">
-        <button
-          class="btn-icon image-attach-btn"
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach image"
-        >
-          +
-        </button>
+        <div class="attach-wrap" ref={attachWrapRef}>
+          <button
+            class={`btn-icon image-attach-btn${menuOpen ? ' attach-open' : ''}`}
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Attach"
+          >
+            +
+          </button>
+          {menuOpen && (
+            <div class="attach-menu" role="menu">
+              <button class="attach-menu-item" role="menuitem" onClick={onPickImage}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+                <span>画像</span>
+              </button>
+              <button class="attach-menu-item" role="menuitem" onClick={onPickFile}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span>ファイル</span>
+              </button>
+            </div>
+          )}
+        </div>
         {driveSupported && (
           <button
             class={`btn-icon drive-toggle-btn${driveActive ? ' drive-active' : ''}`}
@@ -208,7 +307,7 @@ export function PromptInput({ projectId, onSubmit, onCancel, disabled, running, 
           <button
             class="btn-icon send-btn"
             onClick={handleSubmit}
-            disabled={disabled || (!value.trim() && images.length === 0)}
+            disabled={disabled || (!value.trim() && attachments.length === 0)}
             title="Send"
           >
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">

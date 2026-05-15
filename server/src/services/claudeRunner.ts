@@ -86,3 +86,48 @@ export function runClaude(options: ClaudeRunOptions): ChildProcess {
 
   return child;
 }
+
+export interface ClaudeRunPersistentOptions {
+  repoPath: string;
+  claudeSessionId?: string | null;
+  model?: string | null;
+}
+
+/**
+ * Spawn a long-running Claude process that accepts user messages over stdin
+ * (--input-format stream-json). The process stays alive until stdin closes
+ * or it is killed; each line on stdin is one user turn.
+ */
+export function runClaudePersistent(options: ClaudeRunPersistentOptions): ChildProcess {
+  const { repoPath, claudeSessionId, model } = options;
+  validateRepoPath(repoPath);
+
+  const claudeBin = shellEscape(config.claudePath);
+  let cmd = `cd '${shellEscape(repoPath)}' && '${claudeBin}' -p --input-format stream-json --output-format stream-json --verbose --allowedTools 'Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch SendMessage Agent TeamCreate TeamDelete ToolSearch'`;
+
+  if (model) {
+    if (!/^[a-zA-Z0-9._\[\]-]+$/.test(model)) {
+      throw new Error('Invalid model name');
+    }
+    cmd += ` --model '${shellEscape(model)}'`;
+  }
+
+  if (claudeSessionId) {
+    if (!isValidUUID(claudeSessionId)) {
+      throw new Error('Invalid claudeSessionId format');
+    }
+    cmd += ` --resume '${shellEscape(claudeSessionId)}'`;
+  }
+
+  const env = { ...process.env };
+  delete env.CLAUDECODE;
+
+  const shell = process.env.SHELL || 'bash';
+  const child = spawn(shell, ['-lc', cmd], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: false,
+    env,
+  });
+
+  return child;
+}
