@@ -5,6 +5,8 @@ import path from 'path';
 import * as projectService from '../services/projectService.js';
 import * as jobService from '../services/jobService.js';
 import * as persistentOrchestrator from '../services/persistentOrchestrator.js';
+import * as channelOrchestrator from '../services/channelOrchestrator.js';
+import crypto from 'crypto';
 import * as teamRegistry from '../services/teamRegistry.js';
 import * as inboxWriter from '../services/inboxWriter.js';
 import { listConversations, readConversation, getContextUsage, getToolResult, discoverClaudeProjects } from '../services/claudeConversations.js';
@@ -147,6 +149,36 @@ router.post('/:id/run', (req: Request, res: Response) => {
 
   const jobId = jobService.startJob(project.id, project.repo_path, prompt, images, project.model);
   res.status(201).json({ jobId });
+});
+
+// POST /api/projects/:id/run-channel - PoC: send a prompt through the
+// channel orchestrator (subscription-billed interactive claude session).
+router.post('/:id/run-channel', async (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const { prompt } = req.body;
+  if (!prompt || typeof prompt !== 'string') {
+    res.status(400).json({ error: 'prompt is required' });
+    return;
+  }
+  if (Buffer.byteLength(prompt, 'utf-8') > MAX_PROMPT_BYTES) {
+    res.status(400).json({ error: 'prompt exceeds maximum size (1 MB)' });
+    return;
+  }
+  try {
+    const sessionId = project.claude_session_id ?? crypto.randomUUID();
+    if (!project.claude_session_id) {
+      projectService.updateClaudeSessionId(project.id, sessionId);
+    }
+    await channelOrchestrator.ensure(project.id, project.repo_path, sessionId);
+    const { chat_id } = await channelOrchestrator.sendPrompt(project.id, prompt);
+    res.status(201).json({ chatId: chat_id, sessionId });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 // GET /api/projects/:id/jobs - List jobs for a project
