@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ccctl-channel": {
+      "command": "/home/lciel/.local/share/mise/installs/bun/latest/bin/bun",
+      "args": [
+        "run",
+        "--cwd",
+        "/home/lciel/works/git/cc-remote-controller/server/channel-plugin",
+        "--silent",
+        "start"
+      ]
+    }
+  }
+}
+
