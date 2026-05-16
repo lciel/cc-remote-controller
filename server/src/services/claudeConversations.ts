@@ -252,8 +252,12 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        if (parsed.type === 'user' && !parsed.isMeta && parsed.message?.content) {
-          const content = parsed.message.content;
+        // Channel mode prompts arrive via mcp notifications, which claude code
+        // records with isMeta=true and origin.kind='channel'. Treat those as
+        // real user input despite isMeta.
+        const isChannelPrompt = parsed.origin?.kind === 'channel';
+        if (parsed.type === 'user' && (!parsed.isMeta || isChannelPrompt) && parsed.message?.content) {
+          let content = parsed.message.content;
           // Skip tool_result messages (they appear as role:user but are not user input)
           if (Array.isArray(content) && content.length > 0 && content[0]?.type === 'tool_result') {
             continue;
@@ -268,6 +272,14 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
               content.startsWith('This session is being continued from a previous conversation')
             ) {
               continue;
+            }
+            // Strip channel-plugin wrapper tags (Channel mode prompts arrive
+            // as <channel source="ccctl-channel" chat_id="...">...</channel>).
+            const channelMatch = content.match(
+              /^<channel\s+source="ccctl-channel"[^>]*>([\s\S]*?)<\/channel>$/,
+            );
+            if (channelMatch) {
+              content = channelMatch[1].trim();
             }
           }
           messages.push({

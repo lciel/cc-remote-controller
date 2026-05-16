@@ -13,6 +13,7 @@ import { FilePreviewSheet } from './FilePreviewSheet';
 import { TeamPanel } from './TeamPanel';
 import { TeamMemberSheet } from './TeamMemberSheet';
 import { useDriveMode } from '../hooks/useDriveMode';
+import { USE_CHANNELS_KEY } from './ProjectList';
 
 interface Props {
   id?: string;
@@ -595,7 +596,14 @@ export function ProjectDetail({ id }: Props) {
     setJobActive(true);
     currentJobPromptRef.current = prompt;
     try {
-      await api.runJob(id, prompt, images);
+      const useChannels =
+        localStorage.getItem(USE_CHANNELS_KEY) === '1' &&
+        (!images || images.length === 0);
+      if (useChannels) {
+        await api.runJobChannel(id, prompt);
+      } else {
+        await api.runJob(id, prompt, images);
+      }
       if (failedPromptKey) localStorage.removeItem(failedPromptKey);
     } catch (err) {
       setJobActive(false);

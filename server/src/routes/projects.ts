@@ -169,11 +169,12 @@ router.post('/:id/run-channel', async (req: Request, res: Response) => {
     return;
   }
   try {
+    const isNew = !project.claude_session_id;
     const sessionId = project.claude_session_id ?? crypto.randomUUID();
-    if (!project.claude_session_id) {
+    if (isNew) {
       projectService.updateClaudeSessionId(project.id, sessionId);
     }
-    await channelOrchestrator.ensure(project.id, project.repo_path, sessionId);
+    await channelOrchestrator.ensure(project.id, project.repo_path, sessionId, isNew);
     const { chat_id } = await channelOrchestrator.sendPrompt(project.id, prompt);
     res.status(201).json({ chatId: chat_id, sessionId });
   } catch (err) {

@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import { stat, open as fsOpen } from 'fs/promises';
+import { homedir } from 'os';
 import net from 'net';
 import path from 'path';
 import { config } from '../config.js';
@@ -31,11 +33,23 @@ interface ChannelSession {
   projectId: string;
   repoPath: string;
   sessionId: string;
+  isNew: boolean;
   port: number;
   tmuxName: string;
   abort: AbortController;
   startedAt: number;
   currentChatId?: string;
+  jsonlPath: string;
+  jsonlOffset: number; // bytes already read from jsonl; -1 = not yet found
+}
+
+const JSONL_POLL_MS = 200;
+const JSONL_FIND_TIMEOUT_MS = 30000;
+
+function jsonlPathFor(repoPath: string, sessionId: string): string {
+  // claude code encodes the project root path by replacing '/' with '-'.
+  const encoded = repoPath.replace(/\//g, '-');
+  return path.join(homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
 }
 
 const sessions = new Map<string, ChannelSession>();
@@ -92,7 +106,13 @@ async function waitForHealth(port: number): Promise<void> {
 
 function buildClaudeCmd(s: ChannelSession): string {
   // Run via login shell so the user's PATH (mise activation, etc.) applies.
+  // --session-id creates a new session with the given id (fails if it exists);
+  // --resume continues an existing session. Use --resume when the project
+  // already has a stored claude_session_id (matches the -p path's behavior).
   const sq = (v: string) => v.replace(/'/g, "'\\''");
+  const sessionFlag = s.isNew
+    ? `--session-id '${sq(s.sessionId)}'`
+    : `--resume '${sq(s.sessionId)}'`;
   const parts = [
     `cd '${sq(s.repoPath)}'`,
     'unset CLAUDECODE',
@@ -101,80 +121,159 @@ function buildClaudeCmd(s: ChannelSession): string {
       `'${sq(config.claudePath)}'`,
       `--mcp-config '${sq(MCP_CONFIG_PATH)}'`,
       `--dangerously-load-development-channels server:ccctl-channel`,
-      `--allowedTools 'mcp__ccctl-channel__reply'`,
-      `--session-id '${sq(s.sessionId)}'`,
+      `--allowedTools 'mcp__ccctl-channel__reply Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch SendMessage Agent TeamCreate TeamDelete ToolSearch'`,
+      sessionFlag,
     ].join(' '),
   ];
   return parts.join(' && ');
 }
 
-function onReply(
-  s: ChannelSession,
-  payload: { chat_id: string; text: string; ts: number },
-): void {
-  // Synthesize an assistant-message event in the stream-json shape the PWA
-  // already understands (see jobService.processStreamLine).
+const REPLY_TOOL_NAME = 'mcp__ccctl-channel__reply';
+
+function processJsonlLine(s: ChannelSession, line: string): void {
+  type ContentBlock = {
+    type?: string;
+    text?: string;
+    name?: string;
+    input?: { text?: string };
+    tool_use_id?: string;
+    content?: unknown;
+  };
+  type JsonlEntry = {
+    type?: string;
+    message?: {
+      role?: string;
+      content?: unknown;
+      stop_reason?: string | null;
+    };
+  };
+  let parsed: JsonlEntry;
+  try {
+    parsed = JSON.parse(line) as JsonlEntry;
+  } catch {
+    return;
+  }
+
+  if (parsed.type !== 'user' && parsed.type !== 'assistant') return;
+
+  // Skip resume artifacts and channel-tagged user prompts (the PWA already
+  // displays the prompt via job_started.prompt).
+  if (parsed.type === 'user') {
+    const content = parsed.message?.content;
+    const firstText = (() => {
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        const t = (content as ContentBlock[]).find((c) => c?.type === 'text');
+        return t?.text ?? '';
+      }
+      return '';
+    })();
+    if (
+      firstText === 'Continue from where you left off.' ||
+      /<channel\s+source="ccctl-channel"/.test(firstText)
+    ) {
+      return;
+    }
+
+    // Skip tool_result entries from the reply tool (e.g. "sent (chat_id=...)").
+    if (Array.isArray(content)) {
+      const blocks = content as ContentBlock[];
+      const onlyReplyTr =
+        blocks.length === 1 &&
+        blocks[0]?.type === 'tool_result' &&
+        typeof blocks[0]?.content === 'string' &&
+        /^sent \(chat_id=/.test(blocks[0].content);
+      if (onlyReplyTr) return;
+    }
+  }
+
+  // For assistant messages, transform mcp__ccctl-channel__reply tool_use into
+  // a plain text block so the PWA renders the reply text instead of a
+  // collapsed tool call.
+  let outMessage = parsed.message;
+  if (parsed.type === 'assistant' && Array.isArray(outMessage?.content)) {
+    const transformed: ContentBlock[] = [];
+    for (const b of outMessage.content as ContentBlock[]) {
+      if (b?.type === 'tool_use' && b?.name === REPLY_TOOL_NAME) {
+        const text = b.input?.text;
+        if (typeof text === 'string' && text.length > 0) {
+          transformed.push({ type: 'text', text });
+        }
+      } else {
+        transformed.push(b);
+      }
+    }
+    if (transformed.length === 0) return;
+    outMessage = { ...outMessage, content: transformed };
+  }
+
   broadcast(s.projectId, {
     type: 'event',
     projectId: s.projectId,
-    jobId: payload.chat_id,
+    jobId: s.currentChatId ?? s.sessionId,
     data: {
-      type: 'assistant',
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: payload.text }],
-      },
+      type: parsed.type,
+      message: outMessage,
       session_id: s.sessionId,
     },
   });
-  // Mark the "job" finished so the PWA can re-enable input etc.
-  broadcast(s.projectId, {
-    type: 'job_finished',
-    projectId: s.projectId,
-    jobId: payload.chat_id,
-    state: 'SUCCEEDED',
-  });
+
+  // Detect end-of-turn (final assistant message) → mark job finished.
+  if (
+    parsed.type === 'assistant' &&
+    parsed.message?.stop_reason === 'end_turn'
+  ) {
+    broadcast(s.projectId, {
+      type: 'job_finished',
+      projectId: s.projectId,
+      jobId: s.currentChatId ?? s.sessionId,
+      state: 'SUCCEEDED',
+    });
+  }
 }
 
-async function streamSse(s: ChannelSession): Promise<void> {
-  const url = `http://127.0.0.1:${s.port}/events`;
-  try {
-    const r = await fetch(url, { signal: s.abort.signal });
-    if (!r.ok || !r.body) throw new Error(`SSE init failed: ${r.status}`);
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        let event = 'message';
-        let data = '';
-        for (const line of frame.split('\n')) {
-          if (line.startsWith('event:')) event = line.slice(6).trim();
-          else if (line.startsWith('data:')) data = line.slice(5).trim();
-        }
-        if (event === 'reply' && data) {
-          try {
-            const parsed = JSON.parse(data) as {
-              chat_id: string;
-              text: string;
-              ts: number;
-            };
-            onReply(s, parsed);
-          } catch {
-            /* ignore malformed */
-          }
-        }
-      }
+async function watchJsonl(s: ChannelSession): Promise<void> {
+  // Wait for the jsonl file to appear (claude creates it on first turn).
+  const findDeadline = Date.now() + JSONL_FIND_TIMEOUT_MS;
+  while (Date.now() < findDeadline && !s.abort.signal.aborted) {
+    try {
+      const st = await stat(s.jsonlPath);
+      s.jsonlOffset = st.size;
+      break;
+    } catch {
+      await new Promise((r) => setTimeout(r, 300));
     }
-  } catch (err) {
-    if (s.abort.signal.aborted) return;
-    console.warn(`[channelOrchestrator] SSE stream ended for project ${s.projectId}: ${(err as Error).message}`);
+  }
+  if (s.abort.signal.aborted || s.jsonlOffset < 0) return;
+
+  let leftover = '';
+  while (!s.abort.signal.aborted) {
+    await new Promise((r) => setTimeout(r, JSONL_POLL_MS));
+    let st;
+    try {
+      st = await stat(s.jsonlPath);
+    } catch {
+      continue;
+    }
+    if (st.size <= s.jsonlOffset) continue;
+    const len = st.size - s.jsonlOffset;
+    try {
+      const fh = await fsOpen(s.jsonlPath, 'r');
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, s.jsonlOffset);
+      await fh.close();
+      s.jsonlOffset = st.size;
+      const chunk = leftover + buf.toString('utf-8');
+      const lines = chunk.split('\n');
+      leftover = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.trim()) processJsonlLine(s, line);
+      }
+    } catch (err) {
+      console.warn(
+        `[channelOrchestrator] jsonl read failed for ${s.projectId}: ${(err as Error).message}`,
+      );
+    }
   }
 }
 
@@ -182,6 +281,7 @@ export async function ensure(
   projectId: string,
   repoPath: string,
   sessionId: string,
+  isNew: boolean,
 ): Promise<ChannelSession> {
   const existing = sessions.get(projectId);
   if (existing) return existing;
@@ -196,10 +296,13 @@ export async function ensure(
     projectId,
     repoPath,
     sessionId,
+    isNew,
     port,
     tmuxName: tname,
     abort: new AbortController(),
     startedAt: Date.now(),
+    jsonlPath: jsonlPathFor(repoPath, sessionId),
+    jsonlOffset: -1,
   };
 
   const cmd = buildClaudeCmd(session);
@@ -241,8 +344,9 @@ export async function ensure(
 
   sessions.set(projectId, session);
 
-  // Subscribe to the plugin's SSE event stream in the background.
-  void streamSse(session);
+  // Tail the claude session's jsonl in the background to broadcast
+  // assistant/user/tool events to the PWA in real time.
+  void watchJsonl(session);
 
   return session;
 }
@@ -255,21 +359,9 @@ export async function sendPrompt(
   const s = sessions.get(projectId);
   if (!s) throw new Error(`channel orchestrator not running for project ${projectId}`);
 
-  // Broadcast user-side message immediately so the PWA renders it.
+  // Notify the PWA that a job is starting; the prompt itself is rendered
+  // from job_started.prompt (matching the -p path's flow).
   const userChatId = opts?.chat_id ?? `u${Date.now()}`;
-  broadcast(s.projectId, {
-    type: 'event',
-    projectId: s.projectId,
-    jobId: userChatId,
-    data: {
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: content }],
-      },
-      session_id: s.sessionId,
-    },
-  });
   broadcast(s.projectId, {
     type: 'job_started',
     projectId: s.projectId,

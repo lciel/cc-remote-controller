@@ -83,6 +83,12 @@ export const api = {
       body: JSON.stringify({ prompt, images }),
     }),
 
+  runJobChannel: (projectId: string, prompt: string) =>
+    request<{ chatId: string; sessionId: string }>(`/api/projects/${projectId}/run-channel`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
+
   cancelJob: (jobId: string) =>
     request<{ message: string }>(`/api/jobs/${jobId}/cancel`, {
       method: 'POST',
