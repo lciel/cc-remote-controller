@@ -53,6 +53,8 @@ export function ProjectList({ onPreviewOffline }: Props) {
     if (msg.type === 'settings_update') {
       if (msg.wolUrl !== undefined) { localStorage.setItem(WOL_URL_KEY, msg.wolUrl); setWolUrlInput(msg.wolUrl); }
       if (msg.sleepCmd !== undefined) { localStorage.setItem(SLEEP_CMD_KEY, msg.sleepCmd); setSleepCmdInput(msg.sleepCmd); }
+    } else if (msg.type === 'projects_changed') {
+      refresh();
     }
   });
 

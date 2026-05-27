@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "/home/lciel/.local/share/mise/installs/bun/latest/bin/bun server.ts"
+    "start": "bun server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

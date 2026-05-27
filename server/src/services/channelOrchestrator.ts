@@ -1,10 +1,12 @@
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { stat, open as fsOpen } from 'fs/promises';
+import { writeFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import net from 'net';
 import path from 'path';
 import { config } from '../config.js';
 import { broadcast } from '../ws/handler.js';
+import * as projectService from './projectService.js';
 
 /**
  * Per-project orchestrator that runs an interactive `claude` session in a
@@ -19,25 +21,112 @@ import { broadcast } from '../ws/handler.js';
  */
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '../../..');
-const BUN_PATH =
-  process.env.CCCTL_BUN_PATH ??
-  '/home/lciel/.local/share/mise/installs/bun/latest/bin/bun';
+const CHANNEL_PLUGIN_DIR = path.join(ROOT_DIR, 'server/channel-plugin');
+// .mcp.json is read directly by claude (no env expansion), so we generate it
+// at runtime with a resolved bun path into a git-ignored file.
 const MCP_CONFIG_PATH =
   process.env.CCCTL_CHANNEL_MCP_CONFIG ??
-  path.join(ROOT_DIR, 'server/channel-plugin/.mcp.json');
+  path.join(CHANNEL_PLUGIN_DIR, '.mcp.generated.json');
+const BUN_FALLBACK_PATH =
+  '/home/lciel/.local/share/mise/installs/bun/latest/bin/bun';
 const PORT_BASE = 8789;
 const HEALTH_TIMEOUT_MS = 20000;
 const STARTUP_DELAY_MS = 4000;
+const CLAUDE_READY_TIMEOUT_MS = 60000;
+
+let cachedBunPath: string | null = null;
+
+function trySh(cmd: string, args: string[]): string | null {
+  try {
+    const out = execFileSync(cmd, args, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Scan /proc for a live `claude` process whose --resume or --session-id
+ * argument equals the given session id. Returns its pid, or null. Used to
+ * detect "self-session" collisions (e.g. a project bound to the very session
+ * currently driving the controller) before we --resume it. Linux/WSL2 only,
+ * consistent with persistentOrchestrator's /proc scanning.
+ */
+function findLiveClaudePid(sessionId: string): number | null {
+  let entries: string[];
+  try {
+    entries = readdirSync('/proc');
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = parseInt(entry, 10);
+    if (pid === process.pid) continue;
+    let cmdline: string;
+    try {
+      cmdline = readFileSync(path.join('/proc', entry, 'cmdline'), 'utf8');
+    } catch {
+      continue;
+    }
+    const args = cmdline.split('\0').filter((s) => s.length > 0);
+    if (args.length === 0) continue;
+    if (!/(^|\/)claude$/.test(args[0])) continue;
+    const ri = args.indexOf('--resume');
+    if (ri !== -1 && args[ri + 1] === sessionId) return pid;
+    const si = args.indexOf('--session-id');
+    if (si !== -1 && args[si + 1] === sessionId) return pid;
+  }
+  return null;
+}
+
+function resolveBunPath(): string {
+  if (cachedBunPath) return cachedBunPath;
+  const candidates: Array<string | null> = [
+    process.env.CCCTL_BUN_PATH?.trim() || null,
+    trySh('mise', ['which', 'bun']),
+    trySh('bash', ['-lc', 'command -v bun']),
+  ];
+  for (const c of candidates) {
+    if (c && existsSync(c)) {
+      cachedBunPath = c;
+      return c;
+    }
+  }
+  cachedBunPath = BUN_FALLBACK_PATH;
+  return BUN_FALLBACK_PATH;
+}
+
+// Write .mcp.generated.json that declares how claude should spawn the
+// channel plugin. Called before each claude launch so the bun path /
+// repo location track the current environment instead of being hardcoded.
+function writeMcpConfig(): void {
+  const cfg = {
+    mcpServers: {
+      'ccctl-channel': {
+        command: resolveBunPath(),
+        args: [path.join(CHANNEL_PLUGIN_DIR, 'server.ts')],
+      },
+    },
+  };
+  writeFileSync(MCP_CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n');
+}
 
 interface ChannelSession {
   projectId: string;
   repoPath: string;
   sessionId: string;
   isNew: boolean;
+  model: string | null;
   port: number;
   tmuxName: string;
   abort: AbortController;
   startedAt: number;
+  lastActivityAt: number; // last inbound send or claude jsonl output; drives idle stop
   currentChatId?: string;
   jsonlPath: string;
   jsonlOffset: number; // bytes already read from jsonl; -1 = not yet found
@@ -45,6 +134,11 @@ interface ChannelSession {
 
 const JSONL_POLL_MS = 200;
 const JSONL_FIND_TIMEOUT_MS = 30000;
+// Stop a channel session after this long with no activity (no inbound send and
+// no claude output). Frees the claude/bun processes and port; the next send
+// recreates the session via --resume (cold-start cost only, no data loss).
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 60 * 1000;
 
 function jsonlPathFor(repoPath: string, sessionId: string): string {
   // claude code encodes the project root path by replacing '/' with '-'.
@@ -104,6 +198,56 @@ async function waitForHealth(port: number): Promise<void> {
   throw new Error(`plugin /health timeout on port ${port}`);
 }
 
+// Single liveness probe of the channel plugin's /health, used by ensure() to
+// detect a dead session (claude/plugin crashed) and trigger a relaunch. The
+// plugin is a separate process from claude, so it answers instantly even while
+// claude is busy. A few retries with a generous timeout ensure a transient
+// blip on a healthy plugin is never mistaken for death; a truly dead port
+// fails fast (connection refused). Returns true iff the plugin responds OK.
+async function probeHealth(port: number): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (r.ok) return true;
+    } catch {
+      /* not responding */
+    }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
+}
+
+// Poll tmux until claude's interactive input prompt is ready. Claude spawns
+// the channel plugin quickly (so /health passes) but stays unresponsive to
+// MCP notifications while loading a --resume session, so pushing a prompt
+// before this returns can be silently lost.
+async function waitForClaudeReady(
+  tmuxNameArg: string,
+  abort: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + CLAUDE_READY_TIMEOUT_MS;
+  while (Date.now() < deadline && !abort.aborted) {
+    const { stdout } = await sh('tmux', [
+      'capture-pane',
+      '-t',
+      tmuxNameArg,
+      '-p',
+    ]);
+    // A modal (trust / dev-channels / tool permission) renders "❯ 1." options.
+    const inDialog =
+      /❯\s*\d+\.\s/.test(stdout) || /Do you want to proceed\?/.test(stdout);
+    // Ready: an empty interactive prompt line ("❯" with nothing after it).
+    // claude pads the prompt with U+00A0 (NBSP), not a plain space, so allow
+    // any non-newline whitespace.
+    const hasEmptyPrompt = /(^|\n)❯[^\S\r\n]*(\n|$)/.test(stdout);
+    if (hasEmptyPrompt && !inDialog) return true;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
+}
+
 function buildClaudeCmd(s: ChannelSession): string {
   // Run via login shell so the user's PATH (mise activation, etc.) applies.
   // --session-id creates a new session with the given id (fails if it exists);
@@ -113,17 +257,38 @@ function buildClaudeCmd(s: ChannelSession): string {
   const sessionFlag = s.isNew
     ? `--session-id '${sq(s.sessionId)}'`
     : `--resume '${sq(s.sessionId)}'`;
+  // Pass the project's model so channel sessions honor context-window settings
+  // like 'claude-opus-4-7[1m]' (1M). Without this, channel falls back to the
+  // default model (200k) and large sessions force-compact on resume. Mirrors
+  // the -p path (runClaude) validation to guard against shell injection.
+  let modelFlag: string | null = null;
+  if (s.model) {
+    if (!/^[a-zA-Z0-9._\[\]-]+$/.test(s.model)) {
+      throw new Error('Invalid model name');
+    }
+    modelFlag = `--model '${sq(s.model)}'`;
+  }
   const parts = [
     `cd '${sq(s.repoPath)}'`,
     'unset CLAUDECODE',
     `export CCCTL_CHANNEL_PORT=${s.port}`,
+    // Suppress the "Resume from summary / full session" picker claude shows for
+    // sessions over ~70min old or ~100k tokens. Its default ("Resume from
+    // summary") silently compacts the session, and our blind startup Enter
+    // would confirm it. Raising both thresholds beyond any real session makes
+    // resume always load the full session as-is into the [1m] window.
+    'export CLAUDE_CODE_RESUME_TOKEN_THRESHOLD=999999999',
+    'export CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=999999999',
     [
       `'${sq(config.claudePath)}'`,
       `--mcp-config '${sq(MCP_CONFIG_PATH)}'`,
       `--dangerously-load-development-channels server:ccctl-channel`,
       `--allowedTools 'mcp__ccctl-channel__reply Bash Edit Write Read Glob Grep NotebookEdit WebFetch WebSearch SendMessage Agent TeamCreate TeamDelete ToolSearch'`,
+      modelFlag,
       sessionFlag,
-    ].join(' '),
+    ]
+      .filter(Boolean)
+      .join(' '),
   ];
   return parts.join(' && ');
 }
@@ -141,6 +306,9 @@ function processJsonlLine(s: ChannelSession, line: string): void {
   };
   type JsonlEntry = {
     type?: string;
+    subtype?: string;
+    isCompactSummary?: boolean;
+    error?: { message?: string };
     message?: {
       role?: string;
       content?: unknown;
@@ -151,6 +319,51 @@ function processJsonlLine(s: ChannelSession, line: string): void {
   try {
     parsed = JSON.parse(line) as JsonlEntry;
   } catch {
+    return;
+  }
+
+  // Skip compaction summary entries. On compaction claude appends the summary
+  // as a large type:user message with isCompactSummary:true; broadcasting it
+  // would dump a multi-KB summary blob into the PWA as if the user typed it.
+  if (parsed.isCompactSummary) return;
+
+  // Surface API errors (e.g. 529 overloaded) to the PWA. claude records these
+  // as type:"system" subtype:"api_error"; otherwise they're dropped by the
+  // guard below and a failed turn looks like a silent stall. The RUNNING
+  // watchdog (startIdleSweeper) handles the stuck-state recovery separately.
+  if (parsed.type === 'system' && parsed.subtype === 'api_error') {
+    const raw = parsed.error?.message ?? 'API error';
+    broadcast(s.projectId, {
+      type: 'event',
+      projectId: s.projectId,
+      jobId: s.currentChatId ?? s.sessionId,
+      data: {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: `⚠️ API error: ${raw.slice(0, 200)}` }],
+        },
+        session_id: s.sessionId,
+      },
+    });
+    // An errored turn never reaches end_turn, so without this the project
+    // stays RUNNING forever (perpetual spinner). Mark the job failed and
+    // return to IDLE so the PWA recovers. (If claude retries the error and
+    // recovers, the resumed output still streams and end_turn re-IDLEs.)
+    broadcast(s.projectId, {
+      type: 'job_finished',
+      projectId: s.projectId,
+      jobId: s.currentChatId ?? s.sessionId,
+      sessionId: s.sessionId,
+      state: 'FAILED',
+    });
+    projectService.updateProjectState(s.projectId, 'IDLE');
+    broadcast(s.projectId, {
+      type: 'project_state',
+      projectId: s.projectId,
+      sessionId: s.sessionId,
+      state: 'IDLE',
+    });
     return;
   }
 
@@ -170,6 +383,7 @@ function processJsonlLine(s: ChannelSession, line: string): void {
     })();
     if (
       firstText === 'Continue from where you left off.' ||
+      firstText.startsWith('[Request interrupted') ||
       /<channel\s+source="ccctl-channel"/.test(firstText)
     ) {
       return;
@@ -207,6 +421,19 @@ function processJsonlLine(s: ChannelSession, line: string): void {
     outMessage = { ...outMessage, content: transformed };
   }
 
+  // Skip no-op continuation responses ("No response requested." emitted when
+  // the harness injects "Continue from where you left off." with nothing to
+  // add) — internal noise that would otherwise show as a bot message.
+  if (parsed.type === 'assistant' && Array.isArray(outMessage?.content)) {
+    const blocks = outMessage.content as ContentBlock[];
+    if (
+      blocks.every((b) => b?.type === 'text') &&
+      blocks.map((b) => b.text ?? '').join('').trim() === 'No response requested.'
+    ) {
+      return;
+    }
+  }
+
   broadcast(s.projectId, {
     type: 'event',
     projectId: s.projectId,
@@ -227,7 +454,15 @@ function processJsonlLine(s: ChannelSession, line: string): void {
       type: 'job_finished',
       projectId: s.projectId,
       jobId: s.currentChatId ?? s.sessionId,
+      sessionId: s.sessionId,
       state: 'SUCCEEDED',
+    });
+    projectService.updateProjectState(s.projectId, 'IDLE');
+    broadcast(s.projectId, {
+      type: 'project_state',
+      projectId: s.projectId,
+      sessionId: s.sessionId,
+      state: 'IDLE',
     });
   }
 }
@@ -263,6 +498,7 @@ async function watchJsonl(s: ChannelSession): Promise<void> {
       await fh.read(buf, 0, len, s.jsonlOffset);
       await fh.close();
       s.jsonlOffset = st.size;
+      s.lastActivityAt = Date.now(); // claude produced output → not idle
       const chunk = leftover + buf.toString('utf-8');
       const lines = chunk.split('\n');
       leftover = lines.pop() ?? '';
@@ -282,28 +518,84 @@ export async function ensure(
   repoPath: string,
   sessionId: string,
   isNew: boolean,
+  model: string | null = null,
 ): Promise<ChannelSession> {
   const existing = sessions.get(projectId);
-  if (existing) return existing;
+  if (existing) {
+    // Reuse the running session ONLY if it's the same conversation and still
+    // alive. A new conversation (isNew) or a switch to a different session id
+    // must NOT inherit the old live session — otherwise "+ New Conversation"
+    // silently keeps talking to the previous session. A crashed same-id session
+    // (health probe fails) is torn down and relaunched (self-heal).
+    if (!isNew && existing.sessionId === sessionId && (await probeHealth(existing.port))) {
+      return existing;
+    }
+    console.log(
+      `[channelOrchestrator] not reusing session for ${projectId} ` +
+        `(have ${existing.sessionId}, want ${sessionId}, isNew=${isNew}); stopping old`,
+    );
+    await stop(projectId);
+  }
 
   const port = await pickPort();
   const tname = tmuxName(projectId);
 
-  // Pre-kill any stale tmux session with the same name (graceful, ignore error).
+  // Pre-kill any stale tmux session with the same name (graceful, ignore
+  // error). Done first so this project's own previous channel claude is gone
+  // before the self-session liveness check below.
   await sh('tmux', ['kill-session', '-t', tname]);
+
+  const jsonlPath = jsonlPathFor(repoPath, sessionId);
+  let effectiveIsNew = isNew;
+  if (!isNew) {
+    // (a) Stale claude_session_id whose jsonl is gone → start fresh with the
+    // same id, otherwise claude exits with "No conversation found".
+    try {
+      await stat(jsonlPath);
+    } catch {
+      effectiveIsNew = true;
+      console.warn(
+        `[channelOrchestrator] session ${sessionId} has no jsonl; starting fresh with --session-id`,
+      );
+    }
+  }
+
+  if (!effectiveIsNew) {
+    // (b) Self-session guard: never --resume a session still live in another
+    // claude process (e.g. cc-remote-controller bound to the session driving
+    // this controller) — resuming cross-contaminates both conversations. The
+    // just-killed pane may linger briefly, so re-check before giving up.
+    let livePid = findLiveClaudePid(sessionId);
+    for (let i = 0; livePid !== null && i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      livePid = findLiveClaudePid(sessionId);
+    }
+    if (livePid !== null) {
+      throw new Error(
+        `session ${sessionId} is already active in another claude process ` +
+          `(pid ${livePid}); refusing to resume to avoid cross-contamination. ` +
+          `Unlink this project's session or use a project not tied to a live session.`,
+      );
+    }
+  }
 
   const session: ChannelSession = {
     projectId,
     repoPath,
     sessionId,
-    isNew,
+    isNew: effectiveIsNew,
+    model,
     port,
     tmuxName: tname,
     abort: new AbortController(),
     startedAt: Date.now(),
-    jsonlPath: jsonlPathFor(repoPath, sessionId),
+    lastActivityAt: Date.now(),
+    jsonlPath,
     jsonlOffset: -1,
   };
+
+  // Regenerate .mcp.generated.json (bun path / plugin dir) before claude reads it.
+  writeMcpConfig();
 
   const cmd = buildClaudeCmd(session);
   const shell = process.env.SHELL || '/bin/bash';
@@ -342,13 +634,75 @@ export async function ensure(
     throw err;
   }
 
+  // claude spawns the plugin fast but ignores MCP notifications while it
+  // loads a --resume session; wait for its interactive prompt before any
+  // sendPrompt so the first push is not lost.
+  const ready = await waitForClaudeReady(tname, session.abort.signal);
+  if (!ready) {
+    console.warn(
+      `[channelOrchestrator] claude readiness wait timed out for ${projectId}; proceeding anyway`,
+    );
+  }
+
   sessions.set(projectId, session);
+  startIdleSweeper();
 
   // Tail the claude session's jsonl in the background to broadcast
   // assistant/user/tool events to the PWA in real time.
   void watchJsonl(session);
 
   return session;
+}
+
+// Broadcast "job started + RUNNING" immediately on receiving a send, BEFORE
+// ensure()'s (possibly slow) session cold-start, so the PWA flips to running
+// the instant the user sends instead of waiting for the session to boot. Carries
+// sessionId so it lands only on the conversation being started. sendPrompt later
+// re-broadcasts the same chatId idempotently once the session is up.
+export function announceRunning(
+  projectId: string,
+  chatId: string,
+  sessionId: string,
+  prompt: string,
+): void {
+  broadcast(projectId, {
+    type: 'job_started',
+    projectId,
+    jobId: chatId,
+    sessionId,
+    prompt,
+  });
+  projectService.updateProjectState(projectId, 'RUNNING');
+  projectService.updateProjectLastJob(projectId, chatId);
+  broadcast(projectId, {
+    type: 'project_state',
+    projectId,
+    sessionId,
+    state: 'RUNNING',
+  });
+}
+
+// Roll back the optimistic RUNNING (announceRunning) when the cold-start or
+// send fails, so the PWA doesn't get stuck showing running.
+export function announceFailed(
+  projectId: string,
+  chatId: string,
+  sessionId: string,
+): void {
+  broadcast(projectId, {
+    type: 'job_finished',
+    projectId,
+    jobId: chatId,
+    sessionId,
+    state: 'FAILED',
+  });
+  projectService.updateProjectState(projectId, 'IDLE');
+  broadcast(projectId, {
+    type: 'project_state',
+    projectId,
+    sessionId,
+    state: 'IDLE',
+  });
 }
 
 export async function sendPrompt(
@@ -358,6 +712,7 @@ export async function sendPrompt(
 ): Promise<{ chat_id: string }> {
   const s = sessions.get(projectId);
   if (!s) throw new Error(`channel orchestrator not running for project ${projectId}`);
+  s.lastActivityAt = Date.now(); // inbound send → not idle
 
   // Notify the PWA that a job is starting; the prompt itself is rendered
   // from job_started.prompt (matching the -p path's flow).
@@ -366,7 +721,18 @@ export async function sendPrompt(
     type: 'job_started',
     projectId: s.projectId,
     jobId: userChatId,
+    sessionId: s.sessionId,
     prompt: content,
+  });
+  // Mirror the -p path's project-state lifecycle so the PWA shows "running"
+  // and the project sorts to the top of the list (updated_at bump).
+  projectService.updateProjectState(s.projectId, 'RUNNING');
+  projectService.updateProjectLastJob(s.projectId, userChatId);
+  broadcast(s.projectId, {
+    type: 'project_state',
+    projectId: s.projectId,
+    sessionId: s.sessionId,
+    state: 'RUNNING',
   });
 
   const body: Record<string, unknown> = { content, chat_id: userChatId };
@@ -391,10 +757,77 @@ export async function stop(projectId: string): Promise<void> {
   s.abort.abort();
   await sh('tmux', ['kill-session', '-t', s.tmuxName]);
   sessions.delete(projectId);
+  // Ensure state returns to IDLE even if the turn ended without end_turn.
+  // Tag with the stopped session's id so an optimistic RUNNING for a different
+  // conversation (announceRunning during a same-project switch) isn't clobbered.
+  projectService.updateProjectState(projectId, 'IDLE');
+  broadcast(projectId, { type: 'project_state', projectId, sessionId: s.sessionId, state: 'IDLE' });
+}
+
+// Interrupt the current turn WITHOUT killing the session (the PWA stop button
+// in channel mode). Sends Escape to the interactive claude, which stops
+// generation/tool execution and returns to the prompt (recorded as
+// "[Request interrupted...]" in the jsonl). The warm session is kept so the
+// user can immediately resend a corrected message.
+export async function cancel(projectId: string): Promise<void> {
+  const s = sessions.get(projectId);
+  if (!s) throw new Error(`channel orchestrator not running for project ${projectId}`);
+  await sh('tmux', ['send-keys', '-t', s.tmuxName, 'Escape']);
+  s.lastActivityAt = Date.now();
+  broadcast(projectId, {
+    type: 'job_finished',
+    projectId,
+    jobId: s.currentChatId ?? s.sessionId,
+    sessionId: s.sessionId,
+    state: 'CANCELED',
+  });
+  projectService.updateProjectState(projectId, 'IDLE');
+  broadcast(projectId, { type: 'project_state', projectId, sessionId: s.sessionId, state: 'IDLE' });
 }
 
 export function isRunning(projectId: string): boolean {
   return sessions.has(projectId);
+}
+
+// Periodically stop sessions that have seen no activity for IDLE_TIMEOUT_MS.
+// Started lazily on first ensure(); idempotent. unref()'d so it never keeps
+// the process alive on its own.
+let idleSweeper: ReturnType<typeof setInterval> | null = null;
+function startIdleSweeper(): void {
+  if (idleSweeper) return;
+  idleSweeper = setInterval(() => {
+    const now = Date.now();
+    const stale = [...sessions.values()].filter(
+      (s) => now - s.lastActivityAt > IDLE_TIMEOUT_MS,
+    );
+    for (const s of stale) {
+      console.log(
+        `[channelOrchestrator] idle ${Math.round(
+          (now - s.lastActivityAt) / 60000,
+        )}min → stopping ${s.projectId}`,
+      );
+      void stop(s.projectId);
+    }
+  }, SWEEP_INTERVAL_MS);
+  idleSweeper.unref?.();
+}
+
+// Kill all leftover ccctl-* tmux sessions. Call at server startup: after a
+// restart the in-memory session map is empty, so any channel session from a
+// prior server process is an untracked orphan holding a claude/bun process and
+// port. Reaping them frees those resources; the next send to a project
+// recreates its session via --resume (no data loss).
+export async function reapOrphanSessions(): Promise<void> {
+  const r = await sh('tmux', ['ls', '-F', '#{session_name}']);
+  if (r.code !== 0) return; // tmux not running or no sessions
+  const names = r.stdout
+    .split('\n')
+    .map((n) => n.trim())
+    .filter((n) => n.startsWith('ccctl-'));
+  for (const name of names) {
+    await sh('tmux', ['kill-session', '-t', name]);
+    console.log(`[channelOrchestrator] reaped orphan tmux session ${name}`);
+  }
 }
 
 export function list(): Array<{

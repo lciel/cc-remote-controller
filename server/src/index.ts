@@ -12,6 +12,7 @@ import { cleanupAll } from './services/jobService.js';
 import { cleanupUploadDir } from './services/imageStore.js';
 import * as teamWatcher from './services/teamWatcher.js';
 import * as persistentOrchestrator from './services/persistentOrchestrator.js';
+import * as channelOrchestrator from './services/channelOrchestrator.js';
 
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces();
@@ -35,6 +36,14 @@ cleanupUploadDir();
 // instance (e.g. after kill -9). Lets Claude's own graceful shutdown clean
 // up team config so the next ensure() spawns into a fresh state.
 persistentOrchestrator.cleanupOrphans();
+
+// Reap orphan channel (ccctl-*) tmux sessions from a prior server instance.
+// After restart the in-memory channel session map is empty, so any leftover
+// session is an untracked orphan holding a claude/bun process and port; the
+// next send recreates the session via --resume.
+void channelOrchestrator.reapOrphanSessions().catch((err) => {
+  console.warn(`[startup] channel orphan reap failed: ${(err as Error).message}`);
+});
 
 // Create HTTP(S) server
 const server = config.ssl

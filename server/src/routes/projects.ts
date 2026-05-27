@@ -9,6 +9,7 @@ import * as channelOrchestrator from '../services/channelOrchestrator.js';
 import crypto from 'crypto';
 import * as teamRegistry from '../services/teamRegistry.js';
 import * as inboxWriter from '../services/inboxWriter.js';
+import { saveImages } from '../services/imageStore.js';
 import { listConversations, readConversation, getContextUsage, getToolResult, discoverClaudeProjects } from '../services/claudeConversations.js';
 
 const router = Router();
@@ -159,7 +160,7 @@ router.post('/:id/run-channel', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Project not found' });
     return;
   }
-  const { prompt } = req.body;
+  const { prompt, images } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     res.status(400).json({ error: 'prompt is required' });
     return;
@@ -169,14 +170,50 @@ router.post('/:id/run-channel', async (req: Request, res: Response) => {
     return;
   }
   try {
+    // Route attached files through the channel (instead of falling back to -p,
+    // which would resume the same session and double-broadcast the turn). Save
+    // them and append the paths so claude can Read them — mirrors the -p path.
+    let finalPrompt = prompt;
+    if (Array.isArray(images) && images.length > 0) {
+      const paths = saveImages(images);
+      finalPrompt += '\n\n[Attached files - use Read tool to view:]\n' + paths.join('\n');
+    }
     const isNew = !project.claude_session_id;
     const sessionId = project.claude_session_id ?? crypto.randomUUID();
     if (isNew) {
       projectService.updateClaudeSessionId(project.id, sessionId);
     }
-    await channelOrchestrator.ensure(project.id, project.repo_path, sessionId, isNew);
-    const { chat_id } = await channelOrchestrator.sendPrompt(project.id, prompt);
-    res.status(201).json({ chatId: chat_id, sessionId });
+    // Flip the PWA to "running" immediately, before the (possibly slow) session
+    // cold-start, so switching conversations doesn't look frozen until the
+    // session boots. sendPrompt re-broadcasts the same chatId idempotently.
+    const chatId = `u${Date.now()}`;
+    channelOrchestrator.announceRunning(project.id, chatId, sessionId, finalPrompt);
+    try {
+      await channelOrchestrator.ensure(project.id, project.repo_path, sessionId, isNew, project.model ?? null);
+      await channelOrchestrator.sendPrompt(project.id, finalPrompt, { chat_id: chatId });
+    } catch (sendErr) {
+      // Roll back the optimistic RUNNING so the PWA isn't stuck spinning.
+      channelOrchestrator.announceFailed(project.id, chatId, sessionId);
+      throw sendErr;
+    }
+    res.status(201).json({ chatId, sessionId });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/projects/:id/cancel-channel - Interrupt the current channel turn
+// (channel-mode equivalent of /api/jobs/:jobId/cancel; the channel "job" is not
+// a real -p job so cancelJob cannot stop it).
+router.post('/:id/cancel-channel', async (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  try {
+    await channelOrchestrator.cancel(project.id);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

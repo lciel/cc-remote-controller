@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { getDb } from '../db/index.js';
 import { Project, ProjectState } from '../types.js';
+import { broadcastAll } from '../ws/handler.js';
 
 export function createProject(name: string, repoPath: string): Project {
   const db = getDb();
@@ -30,6 +31,9 @@ export function updateProjectState(id: string, state: ProjectState): void {
   db.prepare(
     `UPDATE projects SET state = ?, updated_at = ? WHERE id = ?`
   ).run(state, new Date().toISOString(), id);
+  // Notify all clients (incl. the project list, which doesn't subscribe to a
+  // specific projectId) so the list re-sorts / re-badges without a reload.
+  broadcastAll({ type: 'projects_changed' });
 }
 
 export function updateProjectLastJob(id: string, jobId: string): void {
