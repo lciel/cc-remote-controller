@@ -40,9 +40,13 @@ const mcp = new Server(
       'Messages from the cc-remote-controller PWA arrive as ' +
       '<channel source="ccctl-channel" chat_id="..." message_id="..."> tags. ' +
       'If a tag has a file_path attribute, Read that file — it is an upload ' +
-      'from the user. Reply with the reply tool, passing chat_id from the ' +
-      'inbound tag. Your terminal output never reaches the user; everything ' +
-      'they should see must go through the reply tool.',
+      'from the user. The ccctl-server watcher tails this session\'s jsonl ' +
+      'and streams your assistant text blocks (narration) to the PWA, so ' +
+      '-p-style progress narration reaches the user directly. Use the reply ' +
+      'tool to send the final answer for the turn (pass chat_id from the ' +
+      'inbound tag). Keep narration at -p grade, send one reply per turn ' +
+      'carrying only the final answer, and never repeat in reply what ' +
+      'narration already said.',
   },
 );
 

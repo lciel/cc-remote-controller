@@ -4,6 +4,7 @@ import { writeFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import net from 'net';
 import path from 'path';
+import { StringDecoder } from 'string_decoder';
 import { config } from '../config.js';
 import { broadcast } from '../ws/handler.js';
 import * as projectService from './projectService.js';
@@ -403,12 +404,18 @@ function processJsonlLine(s: ChannelSession, line: string): void {
 
   // For assistant messages, transform mcp__ccctl-channel__reply tool_use into
   // a plain text block so the PWA renders the reply text instead of a
-  // collapsed tool call.
+  // collapsed tool call. Also flag whether this turn contained a reply so the
+  // end-of-turn detection below can treat reply as a user-facing completion
+  // marker (end_turn often never arrives after a reply because the harness
+  // doesn't always issue the follow-up "Continue from where you left off."
+  // turn, leaving the PWA stuck in RUNNING).
   let outMessage = parsed.message;
+  let hadReplyToolUse = false;
   if (parsed.type === 'assistant' && Array.isArray(outMessage?.content)) {
     const transformed: ContentBlock[] = [];
     for (const b of outMessage.content as ContentBlock[]) {
       if (b?.type === 'tool_use' && b?.name === REPLY_TOOL_NAME) {
+        hadReplyToolUse = true;
         const text = b.input?.text;
         if (typeof text === 'string' && text.length > 0) {
           transformed.push({ type: 'text', text });
@@ -446,9 +453,13 @@ function processJsonlLine(s: ChannelSession, line: string): void {
   });
 
   // Detect end-of-turn (final assistant message) → mark job finished.
+  // A reply tool_use counts as completion too: the harness frequently never
+  // emits a follow-up end_turn turn after a reply, which would otherwise
+  // strand the PWA in RUNNING. Re-firing is idempotent if end_turn does
+  // arrive later.
   if (
     parsed.type === 'assistant' &&
-    parsed.message?.stop_reason === 'end_turn'
+    (parsed.message?.stop_reason === 'end_turn' || hadReplyToolUse)
   ) {
     broadcast(s.projectId, {
       type: 'job_finished',
@@ -481,6 +492,10 @@ async function watchJsonl(s: ChannelSession): Promise<void> {
   }
   if (s.abort.signal.aborted || s.jsonlOffset < 0) return;
 
+  // Decode incrementally so a multibyte UTF-8 char split across a read
+  // boundary isn't garbled: the decoder buffers the incomplete trailing bytes
+  // and prepends them on the next read. leftover still handles line splits.
+  const decoder = new StringDecoder('utf8');
   let leftover = '';
   while (!s.abort.signal.aborted) {
     await new Promise((r) => setTimeout(r, JSONL_POLL_MS));
@@ -499,7 +514,7 @@ async function watchJsonl(s: ChannelSession): Promise<void> {
       await fh.close();
       s.jsonlOffset = st.size;
       s.lastActivityAt = Date.now(); // claude produced output → not idle
-      const chunk = leftover + buf.toString('utf-8');
+      const chunk = leftover + decoder.write(buf);
       const lines = chunk.split('\n');
       leftover = lines.pop() ?? '';
       for (const line of lines) {
