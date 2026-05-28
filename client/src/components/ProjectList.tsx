@@ -8,6 +8,7 @@ import { BottomSheet } from './BottomSheet';
 import { WOL_URL_KEY } from './OfflineScreen';
 
 export const SLEEP_CMD_KEY = 'cc-sleep-cmd';
+export const USE_CHANNELS_KEY = 'cc-use-channels';
 
 interface Props {
   path?: string;
@@ -32,6 +33,9 @@ export function ProjectList({ onPreviewOffline }: Props) {
   const [sleepCmdInput, setSleepCmdInput] = useState(
     localStorage.getItem(SLEEP_CMD_KEY) || ''
   );
+  const [useChannelsInput, setUseChannelsInput] = useState(
+    localStorage.getItem(USE_CHANNELS_KEY) === '1'
+  );
   const [showSleepConfirm, setShowSleepConfirm] = useState(false);
   const [sleeping, setSleeping] = useState(false);
 
@@ -49,6 +53,8 @@ export function ProjectList({ onPreviewOffline }: Props) {
     if (msg.type === 'settings_update') {
       if (msg.wolUrl !== undefined) { localStorage.setItem(WOL_URL_KEY, msg.wolUrl); setWolUrlInput(msg.wolUrl); }
       if (msg.sleepCmd !== undefined) { localStorage.setItem(SLEEP_CMD_KEY, msg.sleepCmd); setSleepCmdInput(msg.sleepCmd); }
+    } else if (msg.type === 'projects_changed') {
+      refresh();
     }
   });
 
@@ -138,6 +144,7 @@ export function ProjectList({ onPreviewOffline }: Props) {
 
   const handleSaveToken = () => {
     setToken(tokenInput);
+    localStorage.setItem(USE_CHANNELS_KEY, useChannelsInput ? '1' : '');
     reconnectWs();
     // After reconnect with new token, fetch server settings and then save any local changes
     api.getSettings().then(s => {
@@ -273,6 +280,15 @@ export function ProjectList({ onPreviewOffline }: Props) {
               onInput={(e) => setSleepCmdInput((e.target as HTMLInputElement).value)}
             />
             <p class="settings-hint">Shell command executed on the server. Power icon appears in header when set.</p>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px', fontSize: '0.9rem' }}>
+              <input
+                type="checkbox"
+                checked={useChannelsInput}
+                onChange={(e) => setUseChannelsInput((e.target as HTMLInputElement).checked)}
+              />
+              Channel mode で送信 (PoC)
+            </label>
+            <p class="settings-hint">サブスク枠で課金される公式 Channels 経路を使う。画像つき送信時は自動で旧モードに fallback。</p>
             <button class="btn btn-primary" style={{ width: '100%', marginTop: '12px' }} onClick={handleSaveToken}>
               Save
             </button>

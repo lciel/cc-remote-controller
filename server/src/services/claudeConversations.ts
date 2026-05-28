@@ -252,10 +252,31 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        if (parsed.type === 'user' && !parsed.isMeta && parsed.message?.content) {
-          const content = parsed.message.content;
+        // Skip compaction summary entries (claude appends the summary as a
+        // large type:user message with isCompactSummary:true). Authoritative
+        // flag check, more robust than matching the summary's English preamble.
+        if (parsed.isCompactSummary) continue;
+        // Channel mode prompts arrive via mcp notifications, which claude code
+        // records with isMeta=true and origin.kind='channel'. Treat those as
+        // real user input despite isMeta.
+        const isChannelPrompt = parsed.origin?.kind === 'channel';
+        if (parsed.type === 'user' && (!parsed.isMeta || isChannelPrompt) && parsed.message?.content) {
+          let content = parsed.message.content;
           // Skip tool_result messages (they appear as role:user but are not user input)
           if (Array.isArray(content) && content.length > 0 && content[0]?.type === 'tool_result') {
+            continue;
+          }
+          // Skip interruption sentinels claude injects on tool-use abort
+          // (recorded as a plain string or [{type:"text",text:"[Request..."}]).
+          const sentinelText =
+            typeof content === 'string'
+              ? content
+              : Array.isArray(content)
+                ? (content.find(
+                    (b: { type?: string; text?: string }) => b?.type === 'text',
+                  )?.text ?? '')
+                : '';
+          if (sentinelText.startsWith('[Request interrupted')) {
             continue;
           }
           // Skip system-generated messages (commands, compact summaries, etc.)
@@ -269,6 +290,14 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
             ) {
               continue;
             }
+            // Strip channel-plugin wrapper tags (Channel mode prompts arrive
+            // as <channel source="ccctl-channel" chat_id="...">...</channel>).
+            const channelMatch = content.match(
+              /^<channel\s+source="ccctl-channel"[^>]*>([\s\S]*?)<\/channel>$/,
+            );
+            if (channelMatch) {
+              content = channelMatch[1].trim();
+            }
           }
           messages.push({
             role: 'user',
@@ -276,9 +305,37 @@ export async function readConversation(repoPath: string, sessionId: string): Pro
             timestamp: parsed.timestamp || '',
           });
         } else if (parsed.type === 'assistant' && parsed.message?.content) {
+          let content = parsed.message.content;
+          // Transform mcp__ccctl-channel__reply tool_use into a plain text
+          // block so history renders the reply text instead of a collapsed
+          // tool call (matches the live jsonl-watch path).
+          if (Array.isArray(content)) {
+            const blocks: unknown[] = [];
+            for (const b of content) {
+              if (b?.type === 'tool_use' && b?.name === 'mcp__ccctl-channel__reply') {
+                const text = b?.input?.text;
+                if (typeof text === 'string' && text.length > 0) {
+                  blocks.push({ type: 'text', text });
+                }
+              } else {
+                blocks.push(b);
+              }
+            }
+            content = blocks;
+          }
+          // Skip no-op continuation responses ("No response requested.") —
+          // internal noise, matches the live jsonl-watch path.
+          const asstText =
+            typeof content === 'string'
+              ? content.trim()
+              : Array.isArray(content) &&
+                  content.every((b: { type?: string }) => b?.type === 'text')
+                ? content.map((b: { text?: string }) => b?.text ?? '').join('').trim()
+                : null;
+          if (asstText === 'No response requested.') continue;
           messages.push({
             role: 'assistant',
-            content: parsed.message.content,
+            content,
             timestamp: parsed.timestamp || '',
           });
         }

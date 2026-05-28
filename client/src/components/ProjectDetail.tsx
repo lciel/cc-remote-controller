@@ -13,6 +13,7 @@ import { FilePreviewSheet } from './FilePreviewSheet';
 import { TeamPanel } from './TeamPanel';
 import { TeamMemberSheet } from './TeamMemberSheet';
 import { useDriveMode } from '../hooks/useDriveMode';
+import { USE_CHANNELS_KEY } from './ProjectList';
 
 interface Props {
   id?: string;
@@ -103,9 +104,9 @@ function stripDrivePrefix(text: string): string {
   return text.replace(/^【ドライブモード】[^\n]*\n+/, '');
 }
 
-/** Strip "[Attached images ...]" section appended by server */
+/** Strip "[Attached images/files ...]" section appended by server */
 function stripImagePaths(text: string): { text: string; hadImages: boolean } {
-  const re = /\n?\n?\[Attached images - use Read tool to view:\]\n[\s\S]*$/;
+  const re = /\n?\n?\[Attached (?:images|files) - use Read tool to view:\]\n[\s\S]*$/;
   if (re.test(text)) {
     return { text: text.replace(re, '').trim(), hadImages: true };
   }
@@ -400,6 +401,10 @@ export function ProjectDetail({ id }: Props) {
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const contextLimitRef = useRef(200000);
+  // Session id of the conversation currently being viewed. Live WS stream
+  // events carry data.session_id; we render only those that match this, so a
+  // different conversation's stream doesn't leak into the open view (#2).
+  const viewedSessionIdRef = useRef<string | null>(null);
   const [team, setTeam] = useState<TeamSnapshot | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
@@ -473,9 +478,26 @@ export function ProjectDetail({ id }: Props) {
 
   usePageVisibility(loadProject);
 
+  // Keep the viewed-conversation session id current for WS event filtering.
+  useEffect(() => {
+    viewedSessionIdRef.current = project?.claude_session_id ?? null;
+  }, [project?.claude_session_id]);
+
   // WebSocket real-time updates
   useWebSocket(id || null, (msg) => {
     const m = msg as Record<string, unknown>;
+    // Ignore messages belonging to a different conversation of the same
+    // project, so one conversation's live stream and "running" indicator do
+    // not leak into another (#2). Stream events carry data.session_id; control
+    // messages (job_started/finished, project_state) carry sessionId. Fail
+    // open when the session is unknown (no sessionId, the -p path, or a
+    // not-yet-linked new conversation) so nothing is hidden by mistake.
+    const msgSid = (m.type === 'event'
+      ? (m.data as Record<string, unknown> | undefined)?.session_id
+      : m.sessionId) as string | undefined;
+    if (msgSid && viewedSessionIdRef.current && msgSid !== viewedSessionIdRef.current) {
+      return;
+    }
     if (m.type === 'project_state') {
       setProject((prev) => (prev ? { ...prev, state: m.state as string } : prev));
     } else if (m.type === 'job_started') {
@@ -595,7 +617,12 @@ export function ProjectDetail({ id }: Props) {
     setJobActive(true);
     currentJobPromptRef.current = prompt;
     try {
-      await api.runJob(id, prompt, images);
+      const useChannels = localStorage.getItem(USE_CHANNELS_KEY) === '1';
+      if (useChannels) {
+        await api.runJobChannel(id, prompt, images);
+      } else {
+        await api.runJob(id, prompt, images);
+      }
       if (failedPromptKey) localStorage.removeItem(failedPromptKey);
     } catch (err) {
       setJobActive(false);
@@ -618,9 +645,15 @@ export function ProjectDetail({ id }: Props) {
   };
 
   const handleCancel = async () => {
-    if (!project?.last_job_id) return;
+    const useChannels = localStorage.getItem(USE_CHANNELS_KEY) === '1';
     try {
-      await api.cancelJob(project.last_job_id);
+      if (useChannels) {
+        if (!id) return;
+        await api.cancelChannel(id);
+      } else {
+        if (!project?.last_job_id) return;
+        await api.cancelJob(project.last_job_id);
+      }
     } catch {
       alert('Failed to cancel job');
     }

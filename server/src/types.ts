@@ -38,9 +38,10 @@ export type WsClientMessage =
   | { type: 'unsubscribe'; projectId: string };
 
 export type WsServerMessage =
-  | { type: 'project_state'; projectId: string; state: ProjectState }
-  | { type: 'job_started'; projectId: string; jobId: string; prompt: string }
-  | { type: 'job_finished'; projectId: string; jobId: string; state: JobState }
+  | { type: 'project_state'; projectId: string; state: ProjectState; sessionId?: string }
+  | { type: 'job_started'; projectId: string; jobId: string; prompt: string; sessionId?: string }
+  | { type: 'job_finished'; projectId: string; jobId: string; state: JobState; sessionId?: string }
   | { type: 'event'; projectId: string; jobId: string; data: unknown }
   | { type: 'team_update'; projectId: string }
-  | { type: 'settings_update'; wolUrl: string; sleepCmd: string };
+  | { type: 'settings_update'; wolUrl: string; sleepCmd: string }
+  | { type: 'projects_changed' };
