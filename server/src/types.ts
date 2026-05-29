@@ -42,6 +42,7 @@ export type WsServerMessage =
   | { type: 'job_started'; projectId: string; jobId: string; prompt: string; sessionId?: string }
   | { type: 'job_finished'; projectId: string; jobId: string; state: JobState; sessionId?: string }
   | { type: 'event'; projectId: string; jobId: string; data: unknown }
+  | { type: 'permission_request'; projectId: string; sessionId: string; requestId: string; toolName: string; description: string; inputPreview: string }
   | { type: 'team_update'; projectId: string }
   | { type: 'settings_update'; wolUrl: string; sleepCmd: string }
   | { type: 'projects_changed' };

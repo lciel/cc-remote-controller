@@ -99,6 +99,12 @@ export const api = {
       method: 'POST',
     }),
 
+  sendPermissionVerdict: (projectId: string, requestId: string, behavior: 'allow' | 'deny') =>
+    request<{ ok: boolean }>(`/api/projects/${projectId}/permission-verdict`, {
+      method: 'POST',
+      body: JSON.stringify({ requestId, behavior }),
+    }),
+
   getProjectJobs: (projectId: string) =>
     request<Job[]>(`/api/projects/${projectId}/jobs`),
 

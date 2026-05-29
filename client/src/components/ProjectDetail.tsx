@@ -408,6 +408,12 @@ export function ProjectDetail({ id }: Props) {
   const [team, setTeam] = useState<TeamSnapshot | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
+  const [pendingPermission, setPendingPermission] = useState<{
+    requestId: string;
+    toolName: string;
+    description: string;
+    inputPreview: string;
+  } | null>(null);
 
   const refreshTeam = useCallback(() => {
     if (!id) return;
@@ -540,14 +546,27 @@ export function ProjectDetail({ id }: Props) {
           payload_json: JSON.stringify(data),
         },
       ]);
+    } else if (m.type === 'permission_request') {
+      // Channel mode permission relay: claude needs approval, render a modal.
+      // The session-id gate above already filtered out other conversations.
+      setPendingPermission({
+        requestId: m.requestId as string,
+        toolName: m.toolName as string,
+        description: m.description as string,
+        inputPreview: m.inputPreview as string,
+      });
     } else if (m.type === 'team_update') {
       refreshTeam();
     } else if (m.type === 'job_finished') {
       if (failedPromptKey) localStorage.removeItem(failedPromptKey);
       setPendingFailed(false);
-      setPendingPrompt(null);
       setJobActive(false);
-      // Re-fetch project to get latest claude_session_id (may have been set during job)
+      // Defer setPendingPrompt(null) until the JSONL refetch lands so the
+      // user-sent bubble doesn't blink out during the gap between WS
+      // job_finished and loadHistory completing. The useMemo below also
+      // dedupes pendingMsg against the latest history user message to avoid
+      // a one-frame duplicate while both states overlap.
+      const clearPending = () => setPendingPrompt(null);
       if (id) {
         api.getProject(id).then((fresh) => {
           setProject(fresh);
@@ -555,7 +574,8 @@ export function ProjectDetail({ id }: Props) {
             loadHistory(fresh).then(() => {
               setStreamEvents(prev => prev.filter(e => e.type === 'stderr'));
               currentJobPromptRef.current = null;
-            }).catch(() => {});
+              clearPending();
+            }).catch(clearPending);
             api.getContextUsage(id).then(usage => {
               setContextUsage(usage);
               if (usage?.limit) contextLimitRef.current = usage.limit;
@@ -565,9 +585,12 @@ export function ProjectDetail({ id }: Props) {
               setRawEvents(evts as RawEvent[]);
               setStreamEvents([]);
               currentJobPromptRef.current = null;
-            }).catch(() => {});
+              clearPending();
+            }).catch(clearPending);
           }
-        }).catch(() => {});
+        }).catch(clearPending);
+      } else {
+        clearPending();
       }
     }
   });
@@ -575,12 +598,26 @@ export function ProjectDetail({ id }: Props) {
   const chatMessages = useMemo(() => {
     let msgs: ChatMessage[];
     const imgMap = promptImagesRef.current;
-    const pendingMsg: ChatMessage | null = pendingPrompt ? {
+    let pendingMsg: ChatMessage | null = pendingPrompt ? {
       role: 'user',
       content: [{ type: 'text', text: stripDrivePrefix(pendingPrompt) }],
       images: pendingImages.length > 0 ? pendingImages : undefined,
       status: pendingFailed ? 'failed' : undefined,
     } : null;
+
+    // While pendingPrompt is being cleared (deferred until after loadHistory),
+    // the same user text may already appear at the tail of historyMessages.
+    // Suppress pendingMsg in that overlap window to avoid a duplicate bubble.
+    if (pendingMsg && pendingPrompt && historyMessages.length > 0) {
+      const stripped = stripDrivePrefix(pendingPrompt);
+      for (let i = historyMessages.length - 1; i >= 0; i--) {
+        const h = historyMessages[i];
+        if (h.role !== 'user') continue;
+        const txt = h.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+        if (txt === stripped) pendingMsg = null;
+        break; // only consider the last user message
+      }
+    }
 
     if (historyMessages.length > 0) {
       // Linked: JSONL history is the source, append only live streaming
@@ -1140,6 +1177,39 @@ export function ProjectDetail({ id }: Props) {
           variant="sidebar"
         />
       </aside>
+      {pendingPermission && (
+        <div class="modal-overlay" onClick={() => { /* require explicit answer */ }}>
+          <div class="modal-dialog permission-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3 class="permission-title">Claude wants to use {pendingPermission.toolName}</h3>
+            <p class="permission-desc">{pendingPermission.description}</p>
+            {pendingPermission.inputPreview && (
+              <pre class="permission-preview">{pendingPermission.inputPreview}</pre>
+            )}
+            <div class="permission-actions">
+              <button
+                class="btn"
+                onClick={async () => {
+                  const reqId = pendingPermission.requestId;
+                  setPendingPermission(null);
+                  try {
+                    if (id) await api.sendPermissionVerdict(id, reqId, 'deny');
+                  } catch { /* terminal dialog is the fallback */ }
+                }}
+              >Deny</button>
+              <button
+                class="btn btn-primary"
+                onClick={async () => {
+                  const reqId = pendingPermission.requestId;
+                  setPendingPermission(null);
+                  try {
+                    if (id) await api.sendPermissionVerdict(id, reqId, 'allow');
+                  } catch { /* terminal dialog is the fallback */ }
+                }}
+              >Allow</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

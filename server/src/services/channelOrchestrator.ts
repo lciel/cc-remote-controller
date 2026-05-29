@@ -5,9 +5,23 @@ import { homedir } from 'os';
 import net from 'net';
 import path from 'path';
 import { StringDecoder } from 'string_decoder';
+import { Agent } from 'undici';
 import { config } from '../config.js';
 import { broadcast } from '../ws/handler.js';
 import * as projectService from './projectService.js';
+
+// undici Agent for the long-lived plugin SSE connection. Node's default
+// undici dispatcher applies a 5-minute bodyTimeout, which kills a quiet
+// SSE stream and was the root cause of "permission relay works once after
+// restart, then stops." Setting both timeouts to 0 disables them so the
+// stream stays open indefinitely. keepAliveTimeout is set generously for
+// the same reason. Only used for the SSE fetch in connectPluginSSE.
+const sseAgent = new Agent({
+  bodyTimeout: 0,
+  headersTimeout: 0,
+  keepAliveTimeout: 60_000,
+  keepAliveMaxTimeout: 600_000,
+});
 
 /**
  * Per-project orchestrator that runs an interactive `claude` session in a
@@ -528,6 +542,124 @@ async function watchJsonl(s: ChannelSession): Promise<void> {
   }
 }
 
+// Subscribe to the plugin's SSE stream and translate permission_request
+// events into PWA broadcasts. The same SSE stream still carries reply events
+// (vestigial — jsonl is the source of truth for reply text), so we just
+// ignore anything that isn't a permission_request. Runs alongside watchJsonl
+// for the lifetime of the session; failures are warned but non-fatal — the
+// terminal dialog still works as a manual fallback.
+async function connectPluginSSE(s: ChannelSession): Promise<void> {
+  // Reconnect with exponential backoff. The underlying fetch uses sseAgent
+  // (bodyTimeout=0) so the connection no longer dies after 5 min of silence,
+  // but auto-reconnect is kept as defense-in-depth for crashes, plugin
+  // restarts, or any future timeout we miss.
+  let backoff = 1000;
+  while (!s.abort.signal.aborted) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${s.port}/events`, {
+        signal: s.abort.signal,
+        // @ts-expect-error: dispatcher is a node-fetch / undici extension
+        dispatcher: sseAgent,
+      });
+      if (!r.body) {
+        throw new Error('no response body');
+      }
+      console.log(
+        `[${new Date().toISOString()}] [channelOrchestrator] plugin SSE connected for ${s.projectId} on port ${s.port}`,
+      );
+      backoff = 1000; // successful connect resets backoff
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (!s.abort.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let evtName = 'message';
+          const dataLines: string[] = [];
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) evtName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+          }
+          if (evtName !== 'permission_request' || dataLines.length === 0) continue;
+          try {
+            const p = JSON.parse(dataLines.join('\n')) as {
+              request_id: string;
+              tool_name: string;
+              description: string;
+              input_preview: string;
+            };
+            console.log(
+              `[${new Date().toISOString()}] [channelOrchestrator] permission_request from ${s.projectId} ` +
+                `request_id=${p.request_id} tool=${p.tool_name} ` +
+                `desc=${JSON.stringify(p.description).slice(0, 100)}`,
+            );
+            broadcast(s.projectId, {
+              type: 'permission_request',
+              projectId: s.projectId,
+              sessionId: s.sessionId,
+              requestId: p.request_id,
+              toolName: p.tool_name,
+              description: p.description,
+              inputPreview: p.input_preview,
+            });
+          } catch (err) {
+            console.warn(
+              `[${new Date().toISOString()}] [channelOrchestrator] malformed permission_request payload for ${s.projectId}: ${(err as Error).message}`,
+            );
+          }
+        }
+      }
+      console.log(
+        `[${new Date().toISOString()}] [channelOrchestrator] plugin SSE stream ended for ${s.projectId}`,
+      );
+    } catch (err) {
+      if (s.abort.signal.aborted) break;
+      console.warn(
+        `[${new Date().toISOString()}] [channelOrchestrator] plugin SSE failed for ${s.projectId}: ${(err as Error).message}; reconnecting in ${backoff}ms`,
+      );
+    }
+    if (s.abort.signal.aborted) break;
+    await new Promise((r) => setTimeout(r, backoff));
+    backoff = Math.min(backoff * 2, 30_000);
+  }
+}
+
+// Forward the PWA's permission verdict to the plugin, which turns it into the
+// matching MCP notification claude code is waiting on. If the request_id has
+// already been closed by the local terminal dialog, claude code drops the
+// verdict silently — same behavior as the reference channels in the docs.
+export async function sendPermissionVerdict(
+  projectId: string,
+  requestId: string,
+  behavior: 'allow' | 'deny',
+): Promise<void> {
+  const s = sessions.get(projectId);
+  if (!s) throw new Error(`channel orchestrator not running for project ${projectId}`);
+  console.log(
+    `[${new Date().toISOString()}] [channelOrchestrator] sending verdict for ${projectId} ` +
+      `request_id=${requestId} behavior=${behavior}`,
+  );
+  const r = await fetch(`http://127.0.0.1:${s.port}/verdict`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request_id: requestId, behavior }),
+  });
+  if (!r.ok) {
+    console.warn(
+      `[${new Date().toISOString()}] [channelOrchestrator] /verdict returned ${r.status} for ${projectId} request_id=${requestId}`,
+    );
+    throw new Error(`/verdict returned ${r.status}`);
+  }
+  console.log(
+    `[${new Date().toISOString()}] [channelOrchestrator] verdict acknowledged for ${projectId} request_id=${requestId}`,
+  );
+}
+
 export async function ensure(
   projectId: string,
   repoPath: string,
@@ -665,6 +797,10 @@ export async function ensure(
   // Tail the claude session's jsonl in the background to broadcast
   // assistant/user/tool events to the PWA in real time.
   void watchJsonl(session);
+
+  // Subscribe to the plugin's SSE for permission_request relay (independent
+  // of jsonl; these are MCP notifications that don't land in jsonl).
+  void connectPluginSSE(session);
 
   return session;
 }

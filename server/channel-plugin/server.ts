@@ -17,6 +17,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 const PORT = Number(process.env.CCCTL_CHANNEL_PORT ?? 8789);
 
@@ -33,7 +34,13 @@ const mcp = new Server(
   { name: 'ccctl-channel', version: '0.1.0' },
   {
     capabilities: {
-      experimental: { 'claude/channel': {} },
+      experimental: {
+        'claude/channel': {},
+        // Opt in to permission relay: claude code forwards tool-approval
+        // prompts here, we re-emit them on SSE so ccctl-server pushes them
+        // to the PWA, and a verdict POST on /verdict returns the answer.
+        'claude/channel/permission': {},
+      },
       tools: {},
     },
     instructions:
@@ -85,6 +92,27 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   };
 });
 
+// Permission relay: when claude code wants tool approval, it sends this
+// notification. We re-emit on SSE so ccctl-server can broadcast to the PWA.
+// The PWA's verdict comes back via POST /verdict (below), which turns into
+// the corresponding notifications/claude/channel/permission notification.
+const PermissionRequestSchema = z.object({
+  method: z.literal('notifications/claude/channel/permission_request'),
+  params: z.object({
+    request_id: z.string(),
+    tool_name: z.string(),
+    description: z.string(),
+    input_preview: z.string(),
+  }),
+});
+
+mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+  process.stderr.write(
+    `[ccctl-channel] permission_request request_id=${params.request_id} tool=${params.tool_name}\n`,
+  );
+  emit('permission_request', params);
+});
+
 await mcp.connect(new StdioServerTransport());
 
 let nextChatId = 1;
@@ -132,6 +160,29 @@ Bun.serve({
         params: { content, meta },
       });
       return new Response(JSON.stringify({ ok: true, chat_id }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    // POST /verdict — ccctl-server delivers the PWA's permission verdict.
+    if (req.method === 'POST' && url.pathname === '/verdict') {
+      let body: { request_id?: string; behavior?: string };
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return new Response('bad json', { status: 400 });
+      }
+      const request_id = String(body.request_id ?? '');
+      const behavior = body.behavior === 'allow' ? 'allow' : 'deny';
+      if (!request_id) return new Response('missing request_id', { status: 400 });
+      process.stderr.write(
+        `[ccctl-channel] verdict request_id=${request_id} behavior=${behavior}\n`,
+      );
+      await mcp.notification({
+        method: 'notifications/claude/channel/permission',
+        params: { request_id, behavior },
+      });
+      return new Response(JSON.stringify({ ok: true }), {
         headers: { 'content-type': 'application/json' },
       });
     }

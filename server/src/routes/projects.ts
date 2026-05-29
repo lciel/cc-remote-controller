@@ -202,6 +202,31 @@ router.post('/:id/run-channel', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/projects/:id/permission-verdict - Deliver the PWA's answer to a
+// permission_request relayed through the channel plugin.
+router.post('/:id/permission-verdict', async (req: Request, res: Response) => {
+  const project = projectService.getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+  const { requestId, behavior } = req.body ?? {};
+  if (typeof requestId !== 'string' || !requestId) {
+    res.status(400).json({ error: 'requestId is required' });
+    return;
+  }
+  if (behavior !== 'allow' && behavior !== 'deny') {
+    res.status(400).json({ error: 'behavior must be "allow" or "deny"' });
+    return;
+  }
+  try {
+    await channelOrchestrator.sendPermissionVerdict(project.id, requestId, behavior);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // POST /api/projects/:id/cancel-channel - Interrupt the current channel turn
 // (channel-mode equivalent of /api/jobs/:jobId/cancel; the channel "job" is not
 // a real -p job so cancelJob cannot stop it).

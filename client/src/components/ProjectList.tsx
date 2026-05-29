@@ -288,7 +288,7 @@ export function ProjectList({ onPreviewOffline }: Props) {
               />
               Channel mode で送信 (PoC)
             </label>
-            <p class="settings-hint">サブスク枠で課金される公式 Channels 経路を使う。画像つき送信時は自動で旧モードに fallback。</p>
+            <p class="settings-hint">サブスク枠で課金される公式 Channels 経路を使う。</p>
             <button class="btn btn-primary" style={{ width: '100%', marginTop: '12px' }} onClick={handleSaveToken}>
               Save
             </button>
